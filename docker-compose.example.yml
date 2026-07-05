@@ -1,0 +1,38 @@
+# Example stack for a single Docker host (Compose or Portainer).
+# Copy to docker-compose.yml, create config.yaml from the example, and set secrets in .env:
+#
+#   cp docker-compose.example.yml docker-compose.yml
+#   cp config.example.yaml config.yaml
+#   echo 'VERSENTRY_TELEGRAM_TOKEN=...' >> .env
+#   echo 'VERSENTRY_TELEGRAM_CHAT_ID=...' >> .env
+#   docker compose up -d
+#
+# Force checks without restarting the container:
+#   docker kill --signal=SIGUSR1 versentry   # scheduled check (respects state)
+#   docker kill --signal=SIGUSR2 versentry   # full check (like versentry check)
+
+services:
+  versentry:
+    image: blackraincoat/versentry:latest
+    container_name: versentry
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/health", "-c", "/etc/versentry/config.yaml"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./config.yaml:/etc/versentry/config.yaml:ro
+      - /etc/hostname:/etc/versentry/hostname:ro
+      - versentry-state:/data
+    environment:
+      TZ: Europe/Paris
+      # Host display name: bind-mount above, or set explicitly:
+      # VERSENTRY_INSTANCE_NAME: prod-docker-01
+      VERSENTRY_TELEGRAM_TOKEN: ${VERSENTRY_TELEGRAM_TOKEN:?set in .env}
+      VERSENTRY_TELEGRAM_CHAT_ID: ${VERSENTRY_TELEGRAM_CHAT_ID:?set in .env}
+
+volumes:
+  versentry-state:

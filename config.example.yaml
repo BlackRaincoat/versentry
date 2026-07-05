@@ -1,0 +1,111 @@
+# Versentry example configuration (annotated).
+# Copy and edit before first run:
+#   cp config.example.yaml config.yaml
+# Docker compose mounts ./config.yaml (see docker-compose.example.yml).
+
+# --- Instance name (optional) ---
+# In Docker, os.Hostname() is usually the container id. Options:
+#   instance_name in YAML, VERSENTRY_INSTANCE_NAME env, or bind-mount host /etc/hostname.
+#
+# instance_name: "prod-docker-01"
+
+# --- Provider ---
+provider:
+  type: docker
+  config:
+    # socket: "/var/run/docker.sock"
+
+# --- Registries (optional) ---
+# Public hosts (Docker Hub, GHCR, Quay, GitLab) work without this block.
+# Use registries: for private/self-hosted hosts or credentials on a public host.
+# Env: VERSENTRY_REGISTRY_USERNAME, VERSENTRY_REGISTRY_TOKEN
+#
+# registries:
+#   - type: oci
+#     config:
+#       host: "git.example.com"
+#       username: "user"
+#       token: "secret"
+#       insecure: false
+
+# --- Notifiers ---
+# One entry per channel. Default mode for all: digest (one delivery per check pass).
+# Env overrides YAML (VERSENTRY_*). See docs/configuration.md and docs/notifications.md.
+notifiers:
+  - type: stdout
+
+  - type: telegram
+    config:
+      parse_mode: HTML
+      # mode: digest
+      # proxy: "socks5://user:pass@host:1080"
+      # item_template: |
+      #   <b>{{.Container}}</b>: {{.Change}}{{if .URL}}
+      #   {{.URL}}{{end}}
+      # digest_template: |
+      #   📦 {{.Instance}}{{if gt .Count 1}} — {{.Count}} updates{{end}}
+      #   {{.Items}}
+      # api_url: "https://api.telegram.org"
+      # timeout: "10s"
+      # retries: 3
+      # retry_delay: "1s"
+# Env: VERSENTRY_TELEGRAM_TOKEN, VERSENTRY_TELEGRAM_CHAT_ID, VERSENTRY_TELEGRAM_PROXY
+
+#  - type: webhook
+#    config:
+#      url: "https://example.com/hooks/versentry"
+#      mode: digest
+#      headers:
+#        Authorization: "Bearer token"
+#      template: |
+#        {"text": "{{.Container}}: {{.Change}}"}
+#      proxy: "http://proxy:3128"
+#      timeout: "10s"
+#      retries: 3
+#      retry_delay: "1s"
+# Env: VERSENTRY_WEBHOOK_URL, VERSENTRY_WEBHOOK_AUTHORIZATION, VERSENTRY_WEBHOOK_PROXY
+
+#  - type: discord
+#    config:
+#      url: "https://discord.com/api/webhooks/123456789/abcdef..."
+#      mode: digest
+#      format: embed
+#      color: 3447003
+#      username: "Versentry"
+#      template: |
+#        {"content": "📦 {{.Instance}}: **{{.Container}}** — {{.Change}}"}
+#      timeout: "10s"
+#      retries: 3
+#      retry_delay: "1s"
+# Env: VERSENTRY_DISCORD_WEBHOOK_URL
+
+# --- Rules (optional) ---
+# Per-image tag filters. Per-container: versentry.include label. Opt-out: versentry.watch=false.
+#
+# rules:
+#   - image: "library/postgres"
+#     include: "^17\\.\\d+-alpine3\\.\\d+$"
+#   - image: "chatwoot/chatwoot"
+#     include: "^v\\d+\\.\\d+\\.\\d+-ce$"
+
+# --- Timeouts ---
+timeouts:
+  provider: 10s
+  registry: 30s
+
+# registry_proxy: "socks5://user:pass@host:1080"
+# Env: VERSENTRY_REGISTRY_PROXY
+
+# --- Scheduling ---
+interval: 12h
+# schedule: "0 12 * * *"
+# timezone: Europe/Paris   # cron only; ignored with interval-only mode
+# Cron needs timezone in config or TZ env — see docs/configuration.md#tz-vs-timezone
+# TZ in compose/docker is separate: it sets log timestamps for the whole container.
+
+# --- State & health ---
+# Notification state is internal (suppresses repeat alerts). Default: state.json next to this file.
+# Docker image sets VERSENTRY_STATE_FILE=/data/state.json — mount a volume at /data; no YAML key needed.
+# health_max_age: "3h"
+
+log_level: info

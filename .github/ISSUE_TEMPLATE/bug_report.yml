@@ -1,0 +1,27 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Steps to reproduce, expected vs actual behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Versentry version
+      placeholder: docker run ... versentry version
+  - type: textarea
+    id: config
+    attributes:
+      label: Config (redact secrets)
+      description: Relevant YAML, compose snippet, or notifier settings
+      render: yaml
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      render: shell

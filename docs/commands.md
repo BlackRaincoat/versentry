@@ -1,0 +1,69 @@
+# Commands
+
+Back to [README](../README.md) · [Configuration overview](configuration.md)
+
+## Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `versentry check` | One stateless pass over running containers, then exit (always reports all updates) |
+| `versentry run` | Periodic checks until SIGINT/SIGTERM (suppresses repeat notifications via state file) |
+| `versentry health` | Liveness probe: Docker provider + fresh run-pass stamp (for Docker HEALTHCHECK) |
+| `versentry version` | Print build version |
+
+## Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-c`, `--config` | `config.yaml` | Path to config file |
+| `--log-level` | (from config, else `info`) | `debug`, `info`, `warn`, `error` — overrides `log_level` in config |
+
+```bash
+./versentry check --log-level debug
+./versentry run -c /etc/versentry/config.yaml
+./versentry health -c /etc/versentry/config.yaml
+./versentry version
+```
+
+## `check` vs `run`
+
+| | `versentry check` | `versentry run` |
+|---|-------------------|-----------------|
+| Duration | Single pass, exit | Daemon until stopped |
+| State read | Never | Yes (scheduled passes) |
+| State write | Never | Yes (after all notifiers succeed) |
+| Notifications | All updates found | Only updates not already notified (scheduled) |
+| Scheduling | N/A | `interval` or cron `schedule`; **no check on startup** — first pass at next tick/slot |
+
+### Pass modes inside `run`
+
+| Trigger | Reads state | Writes state | Notifies |
+|---------|-------------|--------------|----------|
+| Scheduled tick / SIGUSR1 | yes | yes (after delivery) | new updates only |
+| Container start / restart | — | — | **no check** until next tick/slot |
+| SIGUSR2 force-check | no | no | all updates (like `check`) |
+
+State key and pruning: [Configuration — notification state](configuration.md#notification-state-versentry-run).
+
+## Signals (`versentry run`)
+
+| Signal | Behavior |
+|--------|----------|
+| `SIGUSR1` | Run a scheduled check **now** (with state suppress + state write) |
+| `SIGUSR2` | Force a full check **now** (like `versentry check` — no state read/write) |
+| `SIGINT` / `SIGTERM` | Stop the daemon |
+
+If a signal arrives while a check is already running, one follow-up check is queued (`SIGUSR2` overrides a queued `SIGUSR1`). No parallel checks.
+
+After a signal-triggered check, the interval ticker is reset (cron keeps wall-clock schedule).
+
+Docker `docker kill` examples: [Deployment — signals](deployment.md#signals).
+
+## What it does and does not do
+
+| | |
+|---|---|
+| **Does** | Lists running containers → compares image tags/digests against registries → notifies |
+| **Does not** | Auto-update, auto-restart, or write to the Docker daemon beyond read-only inspect |
+
+Detection pipeline: [Configuration — how checks work](configuration.md#how-checks-work).

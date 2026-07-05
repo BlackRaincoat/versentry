@@ -1,0 +1,10 @@
+.git
+.go-toolchain
+**/*_test.go
+state.json
+versentry-state.json
+*.md
+!README.md
+docker-compose*.yml
+.env
+.env.*
