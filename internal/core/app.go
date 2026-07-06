@@ -384,6 +384,12 @@ func (a *App) Run(ctx context.Context, cfg *config.Config, configPath, statePath
 		return nil
 	}
 
+	if state.MissingFile(statePath) {
+		if err := trigger(scheduled, "initial check (no state file)"); err != nil {
+			return err
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -424,7 +430,7 @@ func newScheduleSource(cfg *config.Config, log *slog.Logger) (<-chan time.Time, 
 		sched.Start()
 		stop := func() { sched.Stop() }
 		reset := func() {} // cron fires on wall-clock schedule
-		log.Info("using cron schedule", "schedule", cfg.Schedule, "timezone", loc.String(), "note", "first check at next cron tick")
+		log.Info("using cron schedule", "schedule", cfg.Schedule, "timezone", loc.String())
 		return ch, stop, reset, nil
 	}
 
@@ -432,6 +438,6 @@ func newScheduleSource(cfg *config.Config, log *slog.Logger) (<-chan time.Time, 
 	ticker := time.NewTicker(interval)
 	stop := func() { ticker.Stop() }
 	reset := func() { ticker.Reset(interval) }
-	log.Info("using interval schedule", "interval", interval, "first_check_after", interval)
+	log.Info("using interval schedule", "interval", interval)
 	return ticker.C, stop, reset, nil
 }

@@ -12,8 +12,8 @@
 # --- Provider ---
 provider:
   type: docker
-  config:
-    # socket: "/var/run/docker.sock"
+  # config:                          # optional; default uses the Docker socket from the environment
+  #   socket: "/var/run/docker.sock"
 
 # --- Registries (optional) ---
 # Public hosts (Docker Hub, GHCR, Quay, GitLab) work without this block.

@@ -73,6 +73,12 @@ func Load(path string, log *slog.Logger) *Store {
 	return s
 }
 
+// MissingFile reports whether path does not exist yet (first run with no prior state).
+func MissingFile(path string) bool {
+	_, err := os.Stat(path)
+	return os.IsNotExist(err)
+}
+
 // ImageKey returns the normalized state key for an update event.
 func ImageKey(u model.UpdateAvailable) string {
 	return u.Host + "/" + u.Repo

@@ -33,14 +33,15 @@ Back to [README](../README.md) · [Configuration overview](configuration.md)
 | State read | Never | Yes (scheduled passes) |
 | State write | Never | Yes (after all notifiers succeed) |
 | Notifications | All updates found | Only updates not already notified (scheduled) |
-| Scheduling | N/A | `interval` or cron `schedule`; **no check on startup** — first pass at next tick/slot |
+| Scheduling | N/A | `interval` or cron `schedule`; **initial check when state file is missing**, then tick/slot |
 
 ### Pass modes inside `run`
 
 | Trigger | Reads state | Writes state | Notifies |
 |---------|-------------|--------------|----------|
 | Scheduled tick / SIGUSR1 | yes | yes (after delivery) | new updates only |
-| Container start / restart | — | — | **no check** until next tick/slot |
+| Container start / restart (no state file) | yes | yes (after delivery) | new updates only |
+| Container start / restart (state exists) | — | — | **no check** until next tick/slot |
 | SIGUSR2 force-check | no | no | all updates (like `check`) |
 
 State key and pruning: [Configuration — notification state](configuration.md#notification-state-versentry-run).

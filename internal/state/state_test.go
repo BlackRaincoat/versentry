@@ -10,6 +10,27 @@ import (
 	"github.com/BlackRaincoat/versentry/internal/model"
 )
 
+func TestMissingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	if !MissingFile(path) {
+		t.Fatal("expected missing before first save")
+	}
+
+	s := Load(path, slog.Default())
+	s.Record([]model.UpdateAvailable{{
+		Host:      "index.docker.io",
+		Repo:      "library/nginx",
+		LatestTag: "1.27.2",
+	}})
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if MissingFile(path) {
+		t.Fatal("expected file to exist after save")
+	}
+}
+
 func TestFilterNotifiesOnTrackingModeChange(t *testing.T) {
 	s := &Store{
 		data: fileData{

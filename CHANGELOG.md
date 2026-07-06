@@ -6,6 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follo
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-06
+
+### Fixed
+
+- `versentry run` now performs an initial check when the state file is missing, then follows `interval` or cron `schedule` (previously waited until the first tick/slot)
+
+### Changed
+
+- `config.example.yaml`: comment out optional empty `provider.config` block
+
 ## [1.0.0] - 2026-07-06
 
 First public release.
@@ -24,4 +34,5 @@ First public release.
 - Multi-arch Docker image (amd64, arm64)
 - `VERSENTRY_*` environment variable overrides for secrets and paths
 
+[1.0.1]: https://github.com/BlackRaincoat/versentry/releases/tag/v1.0.1
 [1.0.0]: https://github.com/BlackRaincoat/versentry/releases/tag/v1.0.0

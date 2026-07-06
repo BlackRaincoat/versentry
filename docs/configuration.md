@@ -192,7 +192,7 @@ Invalid cron → fail at startup.
 | `*/30 * * * *` | Every 30 minutes |
 | `0 */6 * * *` | Every 6 hours on the hour |
 
-**Startup:** `versentry run` does **not** check registries immediately on start or container restart. The first pass runs at the next `interval` tick or cron slot. Use `versentry check`, `SIGUSR1`, or `SIGUSR2` if you need a check right away.
+**Startup:** When the state file does not exist yet, `versentry run` performs one immediate check, then follows `interval` or cron `schedule`. Restarts with an existing state file wait for the next tick or slot. Use `versentry check`, `SIGUSR1`, or `SIGUSR2` for ad-hoc checks anytime.
 
 ### TZ vs timezone
 
