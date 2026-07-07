@@ -370,7 +370,7 @@ func (a *App) Run(ctx context.Context, cfg *config.Config, configPath, statePath
 		}
 	}
 
-	trigger := func(mode passMode, label string) error {
+	trigger := func(mode passMode, label string, resetAfter bool) error {
 		if coord.tryQueue(mode) {
 			coord.log.Debug("check already running, signal queued", "signal", label)
 			return nil
@@ -380,12 +380,14 @@ func (a *App) Run(ctx context.Context, cfg *config.Config, configPath, statePath
 		if err := runChecks(mode); err != nil {
 			return err
 		}
-		resetSchedule()
+		if resetAfter {
+			resetSchedule()
+		}
 		return nil
 	}
 
 	if state.MissingFile(statePath) {
-		if err := trigger(scheduled, "initial check (no state file)"); err != nil {
+		if err := trigger(scheduled, "initial check (no state file)", true); err != nil {
 			return err
 		}
 	}
@@ -395,15 +397,15 @@ func (a *App) Run(ctx context.Context, cfg *config.Config, configPath, statePath
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-scheduleCh:
-			if err := trigger(scheduled, "scheduled check"); err != nil {
+			if err := trigger(scheduled, "scheduled check", true); err != nil {
 				return err
 			}
 		case <-sigUSR1:
-			if err := trigger(scheduled, "forced scheduled check (SIGUSR1)"); err != nil {
+			if err := trigger(scheduled, "forced scheduled check (SIGUSR1)", true); err != nil {
 				return err
 			}
 		case <-sigUSR2:
-			if err := trigger(forceCheck, "forced full check (SIGUSR2)"); err != nil {
+			if err := trigger(forceCheck, "forced full check (SIGUSR2)", false); err != nil {
 				return err
 			}
 		}

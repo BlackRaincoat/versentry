@@ -6,7 +6,7 @@ Back to [README](../README.md) · [Configuration overview](configuration.md)
 
 ## Two sources (priority)
 
-1. **Config** `rules:` — exact `image` repo (e.g. `library/postgres`, `chatwoot/chatwoot`)
+1. **Config** `rules:` — image repo path as in compose (`postgres`, `chatwoot/chatwoot`, `gethomepage/homepage` for GHCR)
 2. **Container label** `versentry.include` — regex for that container only
 3. Neither → default semver (same major, drop pre-release / non-semver suffixes)
 
@@ -16,7 +16,7 @@ Digest mode (`latest`, non-semver tags) does **not** use rules — only local vs
 
 ```yaml
 rules:
-  - image: "library/postgres"
+  - image: "postgres"
     include: "^17\\.\\d+-alpine3\\.\\d+$"
   - image: "chatwoot/chatwoot"
     include: "^v\\d+\\.\\d+\\.\\d+-ce$"
@@ -32,7 +32,9 @@ services:
       versentry.include: "^17\\.\\d+-alpine3\\.\\d+$"
 ```
 
-`image` must be the **normalized repo** (what Versentry logs / `imageref` produces): `library/nginx` not `nginx`, `chatwoot/chatwoot` not `docker.io/chatwoot/chatwoot`.
+`image` is the **repository path** from your compose ref (strip tag and registry host): `postgres` for `postgres:17.10-alpine3.24`, `chatwoot/chatwoot` for `chatwoot/chatwoot:v4…`, `gethomepage/homepage` for `ghcr.io/gethomepage/homepage:v1…`. Do not include the registry host or tag.
+
+On **Docker Hub only**, official single-name images (`postgres`, `caddy`, `nginx`, …) are stored internally as `library/<name>`; Versentry accepts either `postgres` or `library/postgres` in `rules.image` for those images. Other registries use the exact repo path with no `library/` alias.
 
 ## Regex escaping (common footgun)
 

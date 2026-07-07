@@ -299,7 +299,7 @@ registries:
       token: "glpat-..."
 
 rules:
-  - image: "library/postgres"
+  - image: "postgres"
     include: "^17\\.\\d+-alpine3\\.\\d+$"
   - image: "chatwoot/chatwoot"
     include: "^v\\d+\\.\\d+\\.\\d+-ce$"

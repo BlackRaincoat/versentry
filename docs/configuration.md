@@ -261,6 +261,6 @@ While `versentry run` is active:
 
 If a signal arrives while a check is already running, one follow-up check is queued (`SIGUSR2` overrides a queued `SIGUSR1`). No parallel checks.
 
-After a signal-triggered check, the interval ticker is reset (cron keeps wall-clock schedule).
+With **`interval`**, the ticker resets after a scheduled tick, the initial check (no state file), or **SIGUSR1** — the next automatic run is one full `interval` after that check **finishes**. **SIGUSR2** does not reset the ticker. With **`schedule`** (cron), wall-clock slots are unchanged.
 
 Container commands: [Deployment](deployment.md#signals). CLI details: [Commands](commands.md).

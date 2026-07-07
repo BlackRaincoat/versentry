@@ -83,7 +83,7 @@ notifiers:
 # Per-image tag filters. Per-container: versentry.include label. Opt-out: versentry.watch=false.
 #
 # rules:
-#   - image: "library/postgres"
+#   - image: "postgres"
 #     include: "^17\\.\\d+-alpine3\\.\\d+$"
 #   - image: "chatwoot/chatwoot"
 #     include: "^v\\d+\\.\\d+\\.\\d+-ce$"

@@ -56,7 +56,11 @@ State key and pruning: [Configuration — notification state](configuration.md#n
 
 If a signal arrives while a check is already running, one follow-up check is queued (`SIGUSR2` overrides a queued `SIGUSR1`). No parallel checks.
 
-After a signal-triggered check, the interval ticker is reset (cron keeps wall-clock schedule).
+### Interval vs cron after a check
+
+With **`interval`**, the ticker resets after a scheduled tick, the initial check (no state file), or **SIGUSR1** — the next automatic run is one full `interval` after that check **finishes**. **SIGUSR2** does not reset the ticker (ad-hoc full check must not push back the regular schedule).
+
+With **`schedule`** (cron), wall-clock slots are unchanged; none of the signals shift the cron expression.
 
 Docker `docker kill` examples: [Deployment — signals](deployment.md#signals).
 

@@ -24,6 +24,17 @@ func TestGitHubSourceStripsGitSuffix(t *testing.T) {
 	}
 }
 
+func TestGitHubSourceVersentryNumericTag(t *testing.T) {
+	labels := map[string]string{
+		"org.opencontainers.image.source": "https://github.com/BlackRaincoat/versentry",
+	}
+	got := URL("index.docker.io", "blackraincoat/versentry", "1.0.2", labels)
+	want := "https://github.com/BlackRaincoat/versentry/releases/tag/1.0.2"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
 func TestDockerHubOfficialAndUser(t *testing.T) {
 	got := URL("index.docker.io", "library/nginx", "1.25", nil)
 	want := "https://hub.docker.com/_/nginx?tag=1.25"

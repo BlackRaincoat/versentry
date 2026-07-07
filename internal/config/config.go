@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/BlackRaincoat/versentry/internal/imageref"
 	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
@@ -137,10 +138,12 @@ func validateRules(rules []RuleConfig) error {
 		if _, err := regexp.Compile(rule.Include); err != nil {
 			return fmt.Errorf("rules[%d]: invalid include regex: %w", i, err)
 		}
-		if prev, ok := seen[rule.Image]; ok {
-			return fmt.Errorf("rules[%d]: duplicate image %q (already defined in rules[%d])", i, rule.Image, prev)
+		for _, key := range imageref.RuleConfigKeys(rule.Image) {
+			if prev, ok := seen[key]; ok {
+				return fmt.Errorf("rules[%d]: image %q conflicts with rules[%d] image %q", i, rule.Image, prev, rules[prev].Image)
+			}
+			seen[key] = i
 		}
-		seen[rule.Image] = i
 	}
 	return nil
 }

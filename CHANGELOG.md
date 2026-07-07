@@ -4,7 +4,18 @@ All notable changes to Versentry are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follows [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [1.0.2] - 2026-07-07
+
+### Fixed
+
+- GitHub release links in Versentry self-update notifications align with registry tags (`1.0.2`, not `v1.0.2`)
+- `SIGUSR2` no longer resets the `interval` ticker in `versentry run` (ad-hoc full checks do not delay the next scheduled tick)
+- `rules.image` accepts Docker Hub short names (`postgres`, `caddy`, …) as in compose, not only `library/<name>`
+
+### Changed
+
+- Git release tags use `X.Y.Z` without a `v` prefix (aligned with Docker Hub / GHCR); applies from this version onward (`v1.0.0` / `v1.0.1` remain on GitHub)
+- Document `interval` vs cron behavior for scheduled ticks, **SIGUSR1**, and **SIGUSR2**
 
 ## [1.0.1] - 2026-07-06
 
@@ -34,5 +45,6 @@ First public release.
 - Multi-arch Docker image (amd64, arm64)
 - `VERSENTRY_*` environment variable overrides for secrets and paths
 
+[1.0.2]: https://github.com/BlackRaincoat/versentry/releases/tag/1.0.2
 [1.0.1]: https://github.com/BlackRaincoat/versentry/releases/tag/v1.0.1
 [1.0.0]: https://github.com/BlackRaincoat/versentry/releases/tag/v1.0.0

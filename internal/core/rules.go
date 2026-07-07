@@ -6,6 +6,7 @@ import (
 	"regexp"
 
 	"github.com/BlackRaincoat/versentry/internal/config"
+	"github.com/BlackRaincoat/versentry/internal/imageref"
 )
 
 // Label key for a per-container include regex (same semantics as rules[].include).
@@ -19,6 +20,7 @@ type Rule struct {
 
 // RuleQuery is the input for rule resolution: image identity plus container labels.
 type RuleQuery struct {
+	Host   string
 	Image  string
 	Labels map[string]string
 }
@@ -55,7 +57,12 @@ func (r *ConfigRuleResolver) RuleFor(q RuleQuery) *Rule {
 	if r == nil {
 		return nil
 	}
-	return r.byImage[q.Image]
+	for _, key := range imageref.RuleLookupKeys(q.Host, q.Image) {
+		if rule := r.byImage[key]; rule != nil {
+			return rule
+		}
+	}
+	return nil
 }
 
 // LabelRuleResolver resolves rules from the versentry.include container label.

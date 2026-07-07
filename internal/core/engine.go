@@ -189,7 +189,7 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 
 	selector := e.tagSelector
 	if e.rules != nil {
-		if rule := e.rules.RuleFor(RuleQuery{Image: parsed.Repo, Labels: c.Labels}); rule != nil {
+		if rule := e.rules.RuleFor(RuleQuery{Host: parsed.Host, Image: parsed.Repo, Labels: c.Labels}); rule != nil {
 			if !rule.Include.MatchString(parsed.Tag) {
 				return e.skipped(base, "current tag does not match include rule"), nil
 			}
