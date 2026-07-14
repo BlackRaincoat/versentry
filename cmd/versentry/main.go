@@ -34,8 +34,9 @@ func newRootCmd() *cobra.Command {
 	var logLevel string
 
 	root := &cobra.Command{
-		Use:   "versentry",
-		Short: "Docker image update monitor",
+		Use:          "versentry",
+		Short:        "Docker image update monitor",
+		SilenceUsage: true, // runtime errors should not dump flag help
 	}
 
 	root.PersistentFlags().StringVarP(&configPath, "config", "c", "config.yaml", "path to config file")
@@ -43,6 +44,7 @@ func newRootCmd() *cobra.Command {
 
 	root.AddCommand(newCheckCmd(&configPath, &logLevel))
 	root.AddCommand(newRunCmd(&configPath, &logLevel))
+	root.AddCommand(newLinksCmd(&configPath, &logLevel))
 	root.AddCommand(newHealthCmd(&configPath))
 	root.AddCommand(newVersionCmd())
 
@@ -61,10 +63,15 @@ func newVersionCmd() *cobra.Command {
 
 func newCheckCmd(configPath, logLevel *string) *cobra.Command {
 	return &cobra.Command{
-		Use:   "check",
-		Short: "Run a single update check and exit",
+		Use:          "check",
+		Short:        "Run a single update check and exit",
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			app, err := loadApp(*configPath, *logLevel)
+			cfg, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+			app, err := loadApp(cfg, *logLevel)
 			if err != nil {
 				return err
 			}
@@ -75,8 +82,9 @@ func newCheckCmd(configPath, logLevel *string) *cobra.Command {
 
 func newRunCmd(configPath, logLevel *string) *cobra.Command {
 	return &cobra.Command{
-		Use:   "run",
-		Short: "Run periodic update checks until interrupted",
+		Use:          "run",
+		Short:        "Run periodic update checks until interrupted",
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(*configPath)
 			if err != nil {
@@ -87,7 +95,7 @@ func newRunCmd(configPath, logLevel *string) *cobra.Command {
 				return fmt.Errorf("health stamp: %w", err)
 			}
 
-			app, err := loadApp(*configPath, *logLevel)
+			app, err := loadApp(cfg, *logLevel)
 			if err != nil {
 				return fmt.Errorf("init app: %w", err)
 			}
@@ -97,6 +105,25 @@ func newRunCmd(configPath, logLevel *string) *cobra.Command {
 
 			statePath := config.ResolveStatePath(*configPath, cfg.StateFile)
 			return app.Run(ctx, cfg, *configPath, statePath)
+		},
+	}
+}
+
+func newLinksCmd(configPath, logLevel *string) *cobra.Command {
+	return &cobra.Command{
+		Use:          "links",
+		Short:        "Print notification URLs for monitored containers (no registry calls)",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+			app, err := loadApp(cfg, *logLevel)
+			if err != nil {
+				return err
+			}
+			return app.Links(cmd.Context(), cmd.OutOrStdout())
 		},
 	}
 }
@@ -116,12 +143,7 @@ func newHealthCmd(configPath *string) *cobra.Command {
 	}
 }
 
-func loadApp(configPath, flagLogLevel string) (*core.App, error) {
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("load config: %w", err)
-	}
-
+func loadApp(cfg *config.Config, flagLogLevel string) (*core.App, error) {
 	level, err := resolveLogLevel(cfg.LogLevel, flagLogLevel)
 	if err != nil {
 		return nil, err

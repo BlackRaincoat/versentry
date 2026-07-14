@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/BlackRaincoat/versentry/internal/imageref"
@@ -18,10 +19,11 @@ type PluginConfig struct {
 	Config map[string]any `yaml:"config"`
 }
 
-// RuleConfig is a per-image tag filter from the Versentry config.
+// RuleConfig is a per-image tag filter / detection mode from the Versentry config.
 type RuleConfig struct {
 	Image   string `yaml:"image"`
 	Include string `yaml:"include"`
+	Mode    string `yaml:"mode"` // optional; only "digest" is supported
 }
 
 // Config is the top-level Versentry configuration loaded from YAML.
@@ -132,11 +134,17 @@ func validateRules(rules []RuleConfig) error {
 		if rule.Image == "" {
 			return fmt.Errorf("rules[%d]: image is required", i)
 		}
-		if rule.Include == "" {
-			return fmt.Errorf("rules[%d]: include is required", i)
+		mode := strings.TrimSpace(rule.Mode)
+		if mode != "" && mode != "digest" {
+			return fmt.Errorf("rules[%d]: unknown mode %q, only \"digest\" supported", i, rule.Mode)
 		}
-		if _, err := regexp.Compile(rule.Include); err != nil {
-			return fmt.Errorf("rules[%d]: invalid include regex: %w", i, err)
+		if rule.Include == "" && mode != "digest" {
+			return fmt.Errorf("rules[%d]: include is required unless mode is digest", i)
+		}
+		if rule.Include != "" {
+			if _, err := regexp.Compile(rule.Include); err != nil {
+				return fmt.Errorf("rules[%d]: invalid include regex: %w", i, err)
+			}
 		}
 		for _, key := range imageref.RuleConfigKeys(rule.Image) {
 			if prev, ok := seen[key]; ok {

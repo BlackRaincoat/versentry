@@ -4,6 +4,26 @@ All notable changes to Versentry are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follows [SemVer](https://semver.org/).
 
+## [1.1.0] - 2026-07-15
+
+### Added
+
+- Rules / labels: `mode: digest` forces digest detection for floating tags that still parse as semver (e.g. `valkey/valkey:9-alpine`)
+- `versentry links` — print notification URLs for monitored containers without registry calls
+
+### Changed
+
+- Docs: document notification URL limits (OCI `source` label, wrapper repos, semver `/releases` vs digest registry pages)
+- Notification image links prefer reliable pages: GitHub `{source}/releases` (semver), registry tag views for digest; no more `/releases/tag/{docker-tag}` guesses
+- `versentry run` / `check` load the config file once (no second parse during app init)
+- Notification state is keyed per **container** (`{name}|{host}/{repo}`), not per image — independent suppression for containers sharing an image; state file `version` 2 uses JSON `entries` (was `images`)
+- Upgrading from state `version` 1 resets history (cannot convert old keys); a one-time re-notification of pending updates is possible
+
+### Fixed
+
+- Registry timeout/network error for one image no longer aborts the check pass or crashes `versentry run` (image skipped; pass continues; default `timeouts.registry` unchanged at 30s)
+- `versentry run` exits cleanly on SIGINT/SIGTERM (no `Error: context canceled` or cobra usage dump)
+
 ## [1.0.2] - 2026-07-07
 
 ### Fixed
@@ -45,6 +65,7 @@ First public release.
 - Multi-arch Docker image (amd64, arm64)
 - `VERSENTRY_*` environment variable overrides for secrets and paths
 
+[1.1.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.1.0
 [1.0.2]: https://github.com/BlackRaincoat/versentry/releases/tag/1.0.2
 [1.0.1]: https://github.com/BlackRaincoat/versentry/releases/tag/v1.0.1
 [1.0.0]: https://github.com/BlackRaincoat/versentry/releases/tag/v1.0.0

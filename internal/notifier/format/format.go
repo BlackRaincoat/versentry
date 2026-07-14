@@ -60,11 +60,12 @@ type Payload struct {
 
 // ItemFromEvent builds template/JSON fields for one update.
 func ItemFromEvent(instanceName string, event model.UpdateAvailable, escapeHTML bool) ItemData {
+	mode := TrackingMode(event)
 	tagForURL := event.CurrentTag
 	if event.LatestTag != "" {
 		tagForURL = event.LatestTag
 	}
-	link := imageweb.URL(event.Host, event.Repo, tagForURL, event.Container.Labels)
+	link := imageweb.URL(event.Host, event.Repo, tagForURL, event.Container.Labels, mode)
 
 	return ItemData{
 		Instance:   escape(instanceName, escapeHTML),

@@ -8,6 +8,7 @@ Back to [README](../README.md) · [Configuration overview](configuration.md)
 |---------|-------------|
 | `versentry check` | One stateless pass over running containers, then exit (always reports all updates) |
 | `versentry run` | Periodic checks until SIGINT/SIGTERM (suppresses repeat notifications via state file) |
+| `versentry links` | Print notification URLs for monitored containers (no registry calls, no notify/state) |
 | `versentry health` | Liveness probe: Docker provider + fresh run-pass stamp (for Docker HEALTHCHECK) |
 | `versentry version` | Print build version |
 
@@ -21,9 +22,22 @@ Back to [README](../README.md) · [Configuration overview](configuration.md)
 ```bash
 ./versentry check --log-level debug
 ./versentry run -c /etc/versentry/config.yaml
+./versentry links -c /etc/versentry/config.yaml
 ./versentry health -c /etc/versentry/config.yaml
 ./versentry version
 ```
+
+## `links`
+
+Prints a table of notification URLs for **monitored** containers (same opt-out as checks: `versentry.watch=false` is omitted). Uses local data only — Docker list + image/container labels + rules — **no registry API**, no notifications, no state writes.
+
+Useful to verify Hub / GitHub / GHCR links after changing `mode: digest` or rules. How URLs are chosen (and when they are empty or point at a wrapper repo): [Notifications — Notification URLs](notifications.md#notification-urls).
+
+```bash
+docker exec versentry versentry links -c /etc/versentry/config.yaml
+```
+
+Columns: `CONTAINER`, `IMAGE:TAG`, `MODE` (`semver` / `digest` / `error`), `URL` (`(no url)` when empty). Table on stdout; logs on stderr.
 
 ## `check` vs `run`
 
@@ -52,7 +66,7 @@ State key and pruning: [Configuration — notification state](configuration.md#n
 |--------|----------|
 | `SIGUSR1` | Run a scheduled check **now** (with state suppress + state write) |
 | `SIGUSR2` | Force a full check **now** (like `versentry check` — no state read/write) |
-| `SIGINT` / `SIGTERM` | Stop the daemon |
+| `SIGINT` / `SIGTERM` | Stop the daemon (clean exit 0; logged as shutdown, not an error) |
 
 If a signal arrives while a check is already running, one follow-up check is queued (`SIGUSR2` overrides a queued `SIGUSR1`). No parallel checks.
 

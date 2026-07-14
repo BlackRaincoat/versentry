@@ -53,6 +53,6 @@ registry_proxy: "socks5://user:pass@host:1080"
 
 **Per-pass cache:** each check pass deduplicates `ListTags` / `TagDigest` by `host/repo` (digest mode: `host/repo#tag`). Multiple containers on the same image hit the registry once per pass. Cache is reset between passes.
 
-**Rate limits (HTTP 429):** one short `Retry-After` retry (≤10s) per request; if still rate-limited or `Retry-After` is long/missing, the host is skipped for the rest of the pass (`registry rate limited, will retry next pass`). Other registry hosts are unaffected. Persistent 5xx after transport retries skips the image only (not the whole host).
+**Rate limits (HTTP 429):** one short `Retry-After` retry (≤10s) per request; if still rate-limited or `Retry-After` is long/missing, the host is skipped for the rest of the pass (`registry rate limited, will retry next pass`). Other registry hosts are unaffected. Persistent 5xx after transport retries skips the image only (not the whole host). Per-request timeout or network failure (`timeouts.registry`, default 30s) likewise skips that image and continues the pass — it does not stop `versentry run`.
 
 See also [Configuration — registry behavior](configuration.md#registry-behavior-engine).

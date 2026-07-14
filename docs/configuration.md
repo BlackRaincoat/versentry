@@ -28,7 +28,7 @@ Secrets (Telegram token, webhook URLs, registry credentials) go in **environment
 | `provider` | yes | — | Container source |
 | `notifiers` | yes (≥1) | — | Notification channels — see [Notifications](notifications.md) |
 | `registries` | no | auto public hosts | Extra / private OCI registries — see [Registries](registries.md) |
-| `rules` | no | — | Per-image tag filters — see [Rules](rules.md) |
+| `rules` | no | — | Per-image `include` filters and optional `mode: digest` — see [Rules](rules.md) |
 | `instance_name` | no | see below | Name shown in notification headers |
 | `timeouts.provider` | no | `10s` | Docker API timeout |
 | `timeouts.registry` | no | `30s` | Registry API timeout |
@@ -89,6 +89,8 @@ Use **one entry per channel** (e.g. `stdout` + `telegram`, or `telegram` + `disc
 
 Default `mode` and template keys differ by notifier (`telegram`: `item_template`/`digest_template`; `discord`/`webhook`: optional full-body `template`). All notifiers default to **`digest`**. See [Notifications — defaults by channel](notifications.md#defaults-by-channel).
 
+Links in alerts come from the image `org.opencontainers.image.source` label and tracking mode — limits (missing label, wrapper repos, semver vs digest) are in [Notifications — Notification URLs](notifications.md#notification-urls).
+
 `instance_name` from the top-level config (or hostname / env) is injected into every notifier at startup.
 
 ## Environment variables
@@ -141,7 +143,7 @@ Invalid values (`yes`, `on`, …) log **WARN** and are treated as absent (monito
 
 Excluded containers do not appear in check results (not counted as skipped). Summary logs include `excluded=N`.
 
-**State / re-enable:** excluded containers are not part of the active fleet for notification state. Their image key is pruned from state on the next pass. If you remove the label or set `versentry.watch=true` again, Versentry may **notify again** for updates that were never applied while the container was excluded.
+**State / re-enable:** excluded containers are not part of the active fleet for notification state. Their container state key is pruned on the next pass. If you remove the label or set `versentry.watch=true` again, Versentry may **notify again** for updates that were never applied while the container was excluded.
 
 ```yaml
 services:
@@ -161,11 +163,14 @@ services:
 | `run` (scheduled / SIGUSR1) | yes | yes (after successful delivery) | only new updates |
 | `run` (SIGUSR2 force-check) | no | no | all updates found (like `check`) |
 
-State key: `{registry-host}/{repo}` (e.g. `index.docker.io/library/nginx`). Value: last notified target — semver `LatestTag` or normalized remote digest.
+State key: `{container_name}|{registry-host}/{repo}` (e.g. `web|index.docker.io/library/nginx`). Suppression is **per container**, so two containers on the same image (different tag lines or twin instances) keep independent history. Value: last notified target — semver `LatestTag` or normalized remote digest. JSON map field: `entries` (state file `version` 2).
+
+Registry API dedup within a pass remains **per image** (`host/repo`) — that is separate from state suppression.
 
 - Missing state file → all current updates are treated as new.
 - Corrupt state file at startup → WARN, empty state (monitoring continues; may re-notify once).
-- Stale entries (images no longer running) are pruned on each state-updating pass.
+- State file from an older Versentry (`version` < 2, image-scoped keys) → WARN, history reset; a **one-time re-notification** of pending updates is possible after upgrade.
+- Stale entries (containers no longer monitored) are pruned on each state-updating pass.
 - Empty container list after successful list → prune skipped (transient glitch protection).
 - `ListRunning` error → state not touched.
 - Tracking mode change (digest ↔ semver) → treated as a new target (may notify once).
@@ -225,7 +230,7 @@ With **`interval` only** (no `schedule`), `timezone` in config is unused; `TZ` s
 
 **Per-pass cache:** each check pass deduplicates `ListTags` / `TagDigest` by `host/repo` (digest mode: `host/repo#tag`). Multiple containers on the same image hit the registry once per pass. Cache resets between passes.
 
-**Rate limits (HTTP 429):** one short `Retry-After` retry (≤10s) per request; if still rate-limited or `Retry-After` is long/missing, the host is skipped for the rest of the pass (`registry rate limited, will retry next pass`). Other registry hosts are unaffected. Persistent 5xx after transport retries skips the image only.
+**Rate limits (HTTP 429):** one short `Retry-After` retry (≤10s) per request; if still rate-limited or `Retry-After` is long/missing, the host is skipped for the rest of the pass (`registry rate limited, will retry next pass`). Other registry hosts are unaffected. Persistent 5xx after transport retries skips the image only. Per-request timeout / network errors also skip that image and continue the pass (daemon keeps running).
 
 Details: [Registries](registries.md).
 
@@ -243,9 +248,10 @@ A notifier failure (e.g. bad Telegram token) logs **ERROR** but **does not stop*
 
 1. List running containers (Docker socket); skip containers with `versentry.watch=false`.
 2. Parse image ref → registry host + repo + tag.
-3. **Semver tag:** list tags → apply rule filter if any → newest same-major tag → notify if newer.
-4. **Non-semver tag** (`latest`, …): compare local manifest digest vs registry tag digest.
-5. Batch all updates from the pass → notifiers (`run` may filter already-notified targets before step 5).
+3. If rule/label sets `mode: digest` → compare local vs remote digest for the current tag (see [Rules](rules.md#mode-digest)).
+4. Else if **semver tag:** list tags → apply `include` filter if any → newest same-major tag → notify if newer.
+5. Else **non-semver tag** (`latest`, …): compare local manifest digest vs registry tag digest.
+6. Batch all updates from the pass → notifiers (`run` may filter already-notified targets before step 6).
 
 In `run` mode, detection always logs every update at INFO; only notifier delivery is suppressed by state.
 
@@ -257,7 +263,7 @@ While `versentry run` is active:
 |--------|----------|
 | `SIGUSR1` | Scheduled check **now** (state suppress + state write) |
 | `SIGUSR2` | Full check **now** (like `versentry check` — no state read/write) |
-| `SIGINT` / `SIGTERM` | Stop the daemon |
+| `SIGINT` / `SIGTERM` | Stop the daemon (clean exit; not treated as an error) |
 
 If a signal arrives while a check is already running, one follow-up check is queued (`SIGUSR2` overrides a queued `SIGUSR1`). No parallel checks.
 

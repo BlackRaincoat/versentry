@@ -187,6 +187,17 @@ notifiers:
 | `simple` | One delivery per update |
 | `digest` | One summary for the whole pass (default for telegram, discord, webhook) |
 
+## Notification URLs
+
+`{{.URL}}` / per-update `url` is built from the image OCI label **`org.opencontainers.image.source`** (baked in by the image author) plus registry host and tracking mode. Versentry does not invent a project homepage beyond that metadata. Preview what a running fleet would get with [`versentry links`](commands.md#links).
+
+| Situation | Result |
+|-----------|--------|
+| No `source` label | GitHub / GHCR pkgs links are not built. Docker Hub may still get a registry tag page; GHCR or an unknown registry without the label → empty URL. |
+| `source` is a docker wrapper repo (e.g. `caddyserver/caddy-docker`, `linuxserver/docker-bookstack`) | Link follows that label (e.g. `{source}/releases`). Releases may be empty or for the wrapper, not the upstream project. That is an image-metadata limit — Versentry uses the declared label and cannot reliably map to a “canonical” project repo. |
+| Semver mode + GitHub `source` | `{source}/releases` (release **list**). Not `/releases/tag/…` — git tag shapes are not guessed from Docker tags. |
+| Digest mode | Registry image page (Hub `?tag=`, Quay tags, GHCR pkgs when `source` is set) — never a git release page. |
+
 ## Template variables
 
 Shared field builders live in `internal/notifier/format` (`ItemData`, `Payload`). **Which keys you can set depends on the notifier** — see [Defaults by channel](#defaults-by-channel).
@@ -206,7 +217,7 @@ Shared field builders live in `internal/notifier/format` (`ItemData`, `Payload`)
 | `{{.Image}}` | Image repo (`library/caddy`) |
 | `{{.Tag}}` | Current tag (`event.CurrentTag`) |
 | `{{.Change}}` | Ready-made change line: `2.11.3 → 2.11.4` or `digest changed: abc123… → def456…` |
-| `{{.URL}}` | Web link (may be empty) |
+| `{{.URL}}` | Web link (may be empty) — see [Notification URLs](#notification-urls) |
 | `{{.CurrentTag}}` | Current tag (same value as `Tag`) |
 | `{{.LatestTag}}` | Newer tag (empty for digest-only updates) |
 | `{{.Host}}` | Registry host |

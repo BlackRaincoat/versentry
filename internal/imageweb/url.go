@@ -6,49 +6,89 @@ import (
 	"strings"
 )
 
-const labelSource = "org.opencontainers.image.source"
+const (
+	labelSource = "org.opencontainers.image.source"
+
+	// ModeSemver and ModeDigest match format.TrackingMode values.
+	ModeSemver = "semver"
+	ModeDigest = "digest"
+)
 
 // URL builds a human-facing web link for an image update.
-// Prefer GitHub releases when org.opencontainers.image.source points at github.com;
-// otherwise fall back to a known registry page. Returns "" when no reliable URL exists.
-func URL(host, repo, tag string, labels map[string]string) string {
-	if u := githubReleaseURL(labels, tag); u != "" {
+// Prefer reliable pages (release lists, registry tag views) over guessed per-tag
+// GitHub release URLs that often 404. Returns "" when no reliable URL exists.
+//
+// mode is "semver" or "digest" (see ModeSemver / ModeDigest).
+// tag is LatestTag for semver updates and CurrentTag for digest updates.
+func URL(host, repo, tag string, labels map[string]string, mode string) string {
+	source := parseSource(labels)
+
+	if mode == ModeSemver {
+		if source != nil && isGitHub(source.host) {
+			return source.repoURL + "/releases"
+		}
+		if u := registryPageURL(host, repo, tag, source); u != "" {
+			return u
+		}
+		return sourceRepoURL(source)
+	}
+
+	// Digest: registry first (never git releases); then source repo; then empty.
+	if u := registryPageURL(host, repo, tag, source); u != "" {
 		return u
 	}
-	return registryPageURL(host, repo, tag)
+	return sourceRepoURL(source)
 }
 
-func githubReleaseURL(labels map[string]string, tag string) string {
-	if tag == "" || labels == nil {
-		return ""
-	}
-	source := strings.TrimSpace(labels[labelSource])
-	if source == "" {
-		return ""
-	}
+type parsedSource struct {
+	host    string
+	repoURL string // https://host/owner/repo (no trailing slash)
+}
 
-	u, err := url.Parse(source)
+func parseSource(labels map[string]string) *parsedSource {
+	if labels == nil {
+		return nil
+	}
+	raw := strings.TrimSpace(labels[labelSource])
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
 	if err != nil {
-		return ""
+		return nil
 	}
 	host := strings.ToLower(u.Hostname())
-	if host != "github.com" && host != "www.github.com" {
-		return ""
+	if host == "" {
+		return nil
 	}
-
 	path := strings.Trim(u.Path, "/")
 	path = strings.TrimSuffix(path, ".git")
 	parts := strings.Split(path, "/")
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-		return ""
+		return nil
 	}
-
-	// owner/repo only — ignore extra path segments.
-	base := fmt.Sprintf("https://github.com/%s/%s", parts[0], parts[1])
-	return base + "/releases/tag/" + url.PathEscape(tag)
+	scheme := u.Scheme
+	if scheme == "" {
+		scheme = "https"
+	}
+	return &parsedSource{
+		host:    host,
+		repoURL: fmt.Sprintf("%s://%s/%s/%s", scheme, u.Hostname(), parts[0], parts[1]),
+	}
 }
 
-func registryPageURL(host, repo, tag string) string {
+func isGitHub(host string) bool {
+	return host == "github.com" || host == "www.github.com"
+}
+
+func sourceRepoURL(source *parsedSource) string {
+	if source == nil {
+		return ""
+	}
+	return source.repoURL
+}
+
+func registryPageURL(host, repo, tag string, source *parsedSource) string {
 	switch host {
 	case "index.docker.io":
 		return dockerHubURL(repo, tag)
@@ -57,10 +97,35 @@ func registryPageURL(host, repo, tag string) string {
 			return ""
 		}
 		return "https://quay.io/repository/" + repo + "?tab=tags"
+	case "ghcr.io":
+		return ghcrPackageURL(repo, source)
 	default:
-		// GHCR, GitLab, and unknown/self-hosted hosts have no reliable public page scheme.
 		return ""
 	}
+}
+
+// ghcrPackageURL builds github.com/{owner}/{repo}/pkgs/container/{package}
+// only when a GitHub source label is present (package name = last OCI path segment).
+func ghcrPackageURL(repo string, source *parsedSource) string {
+	if source == nil || !isGitHub(source.host) {
+		return ""
+	}
+	pkg := lastPathSegment(repo)
+	if pkg == "" {
+		return ""
+	}
+	return source.repoURL + "/pkgs/container/" + url.PathEscape(pkg)
+}
+
+func lastPathSegment(repo string) string {
+	repo = strings.Trim(repo, "/")
+	if repo == "" {
+		return ""
+	}
+	if i := strings.LastIndex(repo, "/"); i >= 0 {
+		return repo[i+1:]
+	}
+	return repo
 }
 
 func dockerHubURL(repo, tag string) string {

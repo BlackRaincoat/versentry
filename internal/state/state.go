@@ -12,10 +12,10 @@ import (
 	"github.com/BlackRaincoat/versentry/internal/model"
 )
 
-const fileVersion = 1
+const fileVersion = 2
 
-// ImageState records the last notified update target for an image.
-type ImageState struct {
+// EntryState records the last notified update target for a container+image.
+type EntryState struct {
 	Mode       string    `json:"mode"`
 	Value      string    `json:"value"`
 	NotifiedAt time.Time `json:"notified_at"`
@@ -23,10 +23,10 @@ type ImageState struct {
 
 type fileData struct {
 	Version int                   `json:"version"`
-	Images  map[string]ImageState `json:"images"`
+	Entries map[string]EntryState `json:"entries"`
 }
 
-// Store persists last-notified targets per image in a JSON file.
+// Store persists last-notified targets per container+image in a JSON file.
 type Store struct {
 	path string
 	log  *slog.Logger
@@ -35,6 +35,7 @@ type Store struct {
 
 // Load reads state from path. A missing file yields an empty store.
 // Corrupt JSON logs WARN and yields an empty store (monitoring must not block).
+// Files with version < 2 (image-scoped keys) are reset: conversion is impossible.
 func Load(path string, log *slog.Logger) *Store {
 	if log == nil {
 		log = slog.Default()
@@ -43,10 +44,7 @@ func Load(path string, log *slog.Logger) *Store {
 	s := &Store{
 		path: path,
 		log:  log,
-		data: fileData{
-			Version: fileVersion,
-			Images:  make(map[string]ImageState),
-		},
+		data: emptyData(),
 	}
 
 	raw, err := os.ReadFile(path)
@@ -63,14 +61,22 @@ func Load(path string, log *slog.Logger) *Store {
 		s.log.Warn("state file corrupt, starting empty", "path", path, "error", err)
 		return s
 	}
-	if loaded.Images == nil {
-		loaded.Images = make(map[string]ImageState)
+	if loaded.Version < fileVersion {
+		s.log.Warn("state format changed (v1→v2), history reset, one-time re-notification of pending updates possible")
+		return s
 	}
-	if loaded.Version == 0 {
-		loaded.Version = fileVersion
+	if loaded.Entries == nil {
+		loaded.Entries = make(map[string]EntryState)
 	}
 	s.data = loaded
 	return s
+}
+
+func emptyData() fileData {
+	return fileData{
+		Version: fileVersion,
+		Entries: make(map[string]EntryState),
+	}
 }
 
 // MissingFile reports whether path does not exist yet (first run with no prior state).
@@ -79,14 +85,34 @@ func MissingFile(path string) bool {
 	return os.IsNotExist(err)
 }
 
-// ImageKey returns the normalized state key for an update event.
-func ImageKey(u model.UpdateAvailable) string {
-	return u.Host + "/" + u.Repo
+// EntryKey returns the state key for an update: {container}|{host}/{repo}.
+func EntryKey(u model.UpdateAvailable) string {
+	return FormatEntryKey(u.Container.Name, u.Container.ID, u.Host, u.Repo)
 }
 
-// EntryCount returns the number of images tracked in state.
+// FormatEntryKey builds a state key from container identity and image host/repo.
+// Empty container name falls back to a short container ID (or "unknown").
+func FormatEntryKey(name, id, host, repo string) string {
+	namePart := name
+	if namePart == "" {
+		namePart = shortContainerID(id)
+	}
+	return namePart + "|" + host + "/" + repo
+}
+
+func shortContainerID(id string) string {
+	if id == "" {
+		return "unknown"
+	}
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
+}
+
+// EntryCount returns the number of entries tracked in state.
 func (s *Store) EntryCount() int {
-	return len(s.data.Images)
+	return len(s.data.Entries)
 }
 
 // Filter splits batch into updates that should be notified vs suppressed by state.
@@ -106,7 +132,7 @@ func (s *Store) Filter(batch []model.UpdateAvailable) (toNotify, suppressed []mo
 }
 
 func (s *Store) isNew(u model.UpdateAvailable) bool {
-	stored, ok := s.data.Images[ImageKey(u)]
+	stored, ok := s.data.Entries[EntryKey(u)]
 	if !ok {
 		return true
 	}
@@ -137,7 +163,7 @@ func (s *Store) Record(notified []model.UpdateAvailable) {
 	now := time.Now().UTC()
 	for _, u := range notified {
 		mode, value := targetFor(u)
-		s.data.Images[ImageKey(u)] = ImageState{
+		s.data.Entries[EntryKey(u)] = EntryState{
 			Mode:       mode,
 			Value:      value,
 			NotifiedAt: now,
@@ -145,15 +171,15 @@ func (s *Store) Record(notified []model.UpdateAvailable) {
 	}
 }
 
-// Prune removes state entries for images no longer in the active fleet.
+// Prune removes state entries for containers no longer in the active fleet.
 func (s *Store) Prune(activeKeys []string) {
 	active := make(map[string]struct{}, len(activeKeys))
 	for _, key := range activeKeys {
 		active[key] = struct{}{}
 	}
-	for key := range s.data.Images {
+	for key := range s.data.Entries {
 		if _, ok := active[key]; !ok {
-			delete(s.data.Images, key)
+			delete(s.data.Entries, key)
 		}
 	}
 }
@@ -186,7 +212,7 @@ func (s *Store) Save() error {
 	return nil
 }
 
-// AfterPass records notified updates, optionally prunes stale images, and saves.
+// AfterPass records notified updates, optionally prunes stale entries, and saves.
 // canPrune must be false when the running container list could not be trusted
 // (ListRunning error — caller skips AfterPass entirely — or an empty fleet list).
 func (s *Store) AfterPass(activeKeys []string, notified []model.UpdateAvailable, canPrune bool) error {

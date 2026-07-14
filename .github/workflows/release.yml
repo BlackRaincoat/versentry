@@ -6,7 +6,7 @@ on:
       - "[0-9]+.[0-9]+.[0-9]+"
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -62,3 +62,52 @@ jobs:
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
             COMMIT=${{ github.sha }}
+
+      # After images succeed — create the GitHub Release for this tag.
+      - name: Extract CHANGELOG section for tag
+        id: changelog
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          NOTES_FILE=release-notes.md
+          awk -v ver="$VERSION" '
+            $0 ~ ("^## \\[" ver "\\]") { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > "$NOTES_FILE"
+          # Drop leading/trailing blank lines
+          if [ -s "$NOTES_FILE" ]; then
+            awk 'NF{p=1} p' "$NOTES_FILE" | awk '
+              { lines[NR]=$0 }
+              END {
+                end=NR
+                while (end > 0 && lines[end] ~ /^[[:space:]]*$/) end--
+                for (i = 1; i <= end; i++) print lines[i]
+              }
+            ' > "${NOTES_FILE}.trim"
+            mv "${NOTES_FILE}.trim" "$NOTES_FILE"
+          fi
+          if [ -s "$NOTES_FILE" ]; then
+            echo "notes_ok=true" >> "$GITHUB_OUTPUT"
+            echo "Extracted CHANGELOG section for ${VERSION} ($(wc -l < "$NOTES_FILE") lines)"
+          else
+            echo "notes_ok=false" >> "$GITHUB_OUTPUT"
+            echo "No CHANGELOG section for ${VERSION}; will use GitHub-generated notes"
+          fi
+
+      - name: Create GitHub Release (CHANGELOG body)
+        if: steps.changelog.outputs.notes_ok == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Versentry ${{ github.ref_name }}
+          body_path: release-notes.md
+          generate_release_notes: false
+
+      - name: Create GitHub Release (generated notes fallback)
+        if: steps.changelog.outputs.notes_ok != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Versentry ${{ github.ref_name }}
+          generate_release_notes: true

@@ -4,18 +4,26 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strings"
 
 	"github.com/BlackRaincoat/versentry/internal/config"
 	"github.com/BlackRaincoat/versentry/internal/imageref"
 )
 
-// Label key for a per-container include regex (same semantics as rules[].include).
-const labelInclude = "versentry.include"
+// Label keys for per-container rules (same semantics as config rules[]).
+const (
+	labelInclude = "versentry.include"
+	labelMode    = "versentry.mode"
+)
 
-// Rule is a resolved, compiled tag filter for one image.
+// RuleModeDigest forces digest detection for an image/container.
+const RuleModeDigest = "digest"
+
+// Rule is a resolved rule for one image: optional include filter and/or mode.
 type Rule struct {
 	Image   string
-	Include *regexp.Regexp
+	Include *regexp.Regexp // nil when unset (e.g. mode-only digest rule)
+	Mode    string         // "" or RuleModeDigest
 }
 
 // RuleQuery is the input for rule resolution: image identity plus container labels.
@@ -26,7 +34,7 @@ type RuleQuery struct {
 }
 
 // RuleResolver finds the effective rule for a container/image.
-// Priority (first match wins): config → labels → nil (default semver).
+// Priority (first match wins): config → labels → nil (default detection).
 type RuleResolver interface {
 	RuleFor(q RuleQuery) *Rule
 }
@@ -40,13 +48,19 @@ type ConfigRuleResolver struct {
 func NewConfigRuleResolver(rules []config.RuleConfig) (*ConfigRuleResolver, error) {
 	byImage := make(map[string]*Rule, len(rules))
 	for i, rc := range rules {
-		re, err := regexp.Compile(rc.Include)
-		if err != nil {
-			return nil, fmt.Errorf("rules[%d]: invalid include regex: %w", i, err)
+		var re *regexp.Regexp
+		if rc.Include != "" {
+			compiled, err := regexp.Compile(rc.Include)
+			if err != nil {
+				return nil, fmt.Errorf("rules[%d]: invalid include regex: %w", i, err)
+			}
+			re = compiled
 		}
+		mode := strings.TrimSpace(rc.Mode)
 		byImage[rc.Image] = &Rule{
 			Image:   rc.Image,
 			Include: re,
+			Mode:    mode,
 		}
 	}
 	return &ConfigRuleResolver{byImage: byImage}, nil
@@ -65,7 +79,7 @@ func (r *ConfigRuleResolver) RuleFor(q RuleQuery) *Rule {
 	return nil
 }
 
-// LabelRuleResolver resolves rules from the versentry.include container label.
+// LabelRuleResolver resolves rules from versentry.include / versentry.mode labels.
 type LabelRuleResolver struct {
 	log *slog.Logger
 }
@@ -78,28 +92,46 @@ func NewLabelRuleResolver(log *slog.Logger) *LabelRuleResolver {
 	return &LabelRuleResolver{log: log}
 }
 
-// RuleFor returns a rule from versentry.include, or nil if absent/invalid.
-// Invalid regex is logged and ignored so one bad label cannot break the pass.
+// RuleFor returns a rule from container labels, or nil if absent/invalid.
+// Invalid include or mode is logged and ignored so one bad label cannot break the pass.
 func (r *LabelRuleResolver) RuleFor(q RuleQuery) *Rule {
 	if r == nil || len(q.Labels) == 0 {
 		return nil
 	}
-	raw := q.Labels[labelInclude]
-	if raw == "" {
-		return nil
+
+	var include *regexp.Regexp
+	if raw := q.Labels[labelInclude]; raw != "" {
+		re, err := regexp.Compile(raw)
+		if err != nil {
+			r.log.Warn("invalid versentry.include label, ignoring",
+				"image", q.Image,
+				"include", raw,
+				"error", err,
+			)
+		} else {
+			include = re
+		}
 	}
-	re, err := regexp.Compile(raw)
-	if err != nil {
-		r.log.Warn("invalid versentry.include label, ignoring",
-			"image", q.Image,
-			"include", raw,
-			"error", err,
-		)
+
+	mode := ""
+	if raw := strings.TrimSpace(q.Labels[labelMode]); raw != "" {
+		if raw != RuleModeDigest {
+			r.log.Warn("invalid versentry.mode label, ignoring",
+				"image", q.Image,
+				"mode", raw,
+			)
+		} else {
+			mode = RuleModeDigest
+		}
+	}
+
+	if include == nil && mode == "" {
 		return nil
 	}
 	return &Rule{
 		Image:   q.Image,
-		Include: re,
+		Include: include,
+		Mode:    mode,
 	}
 }
 

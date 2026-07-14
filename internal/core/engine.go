@@ -4,16 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"strings"
 	"time"
 
 	"github.com/BlackRaincoat/versentry/internal/config"
 	"github.com/BlackRaincoat/versentry/internal/core/registrypass"
+	"github.com/BlackRaincoat/versentry/internal/imageweb"
 	"github.com/BlackRaincoat/versentry/internal/imageref"
 	"github.com/BlackRaincoat/versentry/internal/model"
 	"github.com/BlackRaincoat/versentry/internal/provider"
 	"github.com/BlackRaincoat/versentry/internal/registry"
+	"github.com/BlackRaincoat/versentry/internal/state"
 )
 
 type checkStatus string
@@ -70,7 +74,7 @@ func NewEngine(
 }
 
 // RunOnce performs a single pass over all running containers and returns
-// discovered updates, active image keys (host/repo) for state pruning, and
+// discovered updates, active state keys ({container}|{host}/{repo}) for pruning, and
 // whether pruning is safe (true only after a successful non-empty fleet listing).
 func (e *Engine) RunOnce(ctx context.Context) ([]model.UpdateAvailable, []string, bool, error) {
 	listCtx, cancel := context.WithTimeout(ctx, e.timeouts.Provider.Duration)
@@ -101,7 +105,7 @@ func (e *Engine) RunOnce(ctx context.Context) ([]model.UpdateAvailable, []string
 	activeSeen := make(map[string]struct{}, len(monitored))
 
 	for _, c := range monitored {
-		if key, ok := imageKey(c.ImageRef); ok {
+		if key, ok := entryKey(c); ok {
 			if _, dup := activeSeen[key]; !dup {
 				activeSeen[key] = struct{}{}
 				activeKeys = append(activeKeys, key)
@@ -110,7 +114,17 @@ func (e *Engine) RunOnce(ctx context.Context) ([]model.UpdateAvailable, []string
 
 		result, err := e.checkContainer(ctx, c, pass)
 		if err != nil {
-			return nil, nil, false, fmt.Errorf("check container %q: %w", c.Name, err)
+			// Parent pass canceled (SIGTERM / global deadline) — stop the pass.
+			if ctx.Err() != nil {
+				return nil, nil, false, ctx.Err()
+			}
+			// Per-container failure must not abort the pass or kill versentry run.
+			e.log.Warn("container check failed, skipping",
+				"container", c.Name,
+				"image", c.ImageRef,
+				"error", err,
+			)
+			result = e.skipped(containerResult{Container: c, ImageRef: c.ImageRef}, err.Error())
 		}
 
 		checked++
@@ -141,12 +155,12 @@ func (e *Engine) RunOnce(ctx context.Context) ([]model.UpdateAvailable, []string
 	return found, activeKeys, canPrune, nil
 }
 
-func imageKey(raw string) (string, bool) {
-	parsed, err := imageref.Parse(raw)
+func entryKey(c model.Container) (string, bool) {
+	parsed, err := imageref.Parse(c.ImageRef)
 	if err != nil {
 		return "", false
 	}
-	return parsed.Host + "/" + parsed.Repo, true
+	return state.FormatEntryKey(c.Name, c.ID, parsed.Host, parsed.Repo), true
 }
 
 func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *registrypass.Pass) (containerResult, error) {
@@ -166,8 +180,8 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 		return e.skipped(base, err.Error()), nil
 	}
 
-	current, err := parseContainerSemver(parsed.Tag)
-	if err != nil {
+	mode, rule := resolveTrackingMode(e.rules, e.log, parsed.Host, parsed.Repo, parsed.Tag, c.Labels)
+	if mode == imageweb.ModeDigest {
 		return e.checkDigest(ctx, c, parsed, reg, pass)
 	}
 
@@ -175,30 +189,25 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 	tags, err := pass.ListTags(listCtx, reg, parsed.Host, parsed.Repo)
 	cancel()
 	if err != nil {
-		if errors.Is(err, registry.ErrNotFound) || errors.Is(err, registry.ErrUnauthorized) {
-			return e.skipped(base, "not found in registry / locally built"), nil
-		}
-		if errors.Is(err, registry.ErrRateLimited) {
-			return e.skipped(base, "registry rate limited, will retry next pass"), nil
-		}
-		if errors.Is(err, registry.ErrUnavailable) {
-			return e.skipped(base, "registry temporarily unavailable"), nil
-		}
-		return containerResult{}, fmt.Errorf("list tags for %s: %w", parsed.Repo, err)
+		return e.mapRegistryRequestError(ctx, base, "list tags", parsed.Repo, err)
 	}
 
 	selector := e.tagSelector
-	if e.rules != nil {
-		if rule := e.rules.RuleFor(RuleQuery{Host: parsed.Host, Image: parsed.Repo, Labels: c.Labels}); rule != nil {
-			if !rule.Include.MatchString(parsed.Tag) {
-				return e.skipped(base, "current tag does not match include rule"), nil
-			}
-			tags = filterTags(tags, rule.Include)
-			if len(tags) == 0 {
-				return e.skipped(base, "no tags match include rule"), nil
-			}
-			selector = e.ruleSelector
+	if rule != nil && rule.Include != nil {
+		if !rule.Include.MatchString(parsed.Tag) {
+			return e.skipped(base, "current tag does not match include rule"), nil
 		}
+		tags = filterTags(tags, rule.Include)
+		if len(tags) == 0 {
+			return e.skipped(base, "no tags match include rule"), nil
+		}
+		selector = e.ruleSelector
+	}
+
+	current, err := parseContainerSemver(parsed.Tag)
+	if err != nil {
+		// Mode was semver; tag must parse — treat as skip rather than surprise digest.
+		return e.skipped(base, fmt.Sprintf("parse semver tag: %v", err)), nil
 	}
 
 	latestTag, latest, ok := selector.Select(current, tags)
@@ -257,16 +266,7 @@ func (e *Engine) checkDigest(
 	remoteDigest, err := pass.TagDigest(remoteCtx, reg, parsed.Host, parsed.Repo, parsed.Tag)
 	cancel()
 	if err != nil {
-		if errors.Is(err, registry.ErrNotFound) || errors.Is(err, registry.ErrUnauthorized) {
-			return e.skipped(base, "not found in registry / locally built"), nil
-		}
-		if errors.Is(err, registry.ErrRateLimited) {
-			return e.skipped(base, "registry rate limited, will retry next pass"), nil
-		}
-		if errors.Is(err, registry.ErrUnavailable) {
-			return e.skipped(base, "registry temporarily unavailable"), nil
-		}
-		return containerResult{}, fmt.Errorf("resolve remote digest for %s:%s: %w", parsed.Repo, parsed.Tag, err)
+		return e.mapRegistryRequestError(ctx, base, "resolve remote digest", parsed.Repo+":"+parsed.Tag, err)
 	}
 	if remoteDigest == "" {
 		return e.skipped(base, "not found in registry / locally built"), nil
@@ -308,6 +308,58 @@ func (e *Engine) skipped(base containerResult, reason string) containerResult {
 	base.Status = statusSkipped
 	base.Reason = reason
 	return base
+}
+
+// mapRegistryRequestError turns registry call failures into skip reasons when the
+// parent pass context is still live (per-request timeout / network). If the parent
+// ctx is done (SIGTERM / pass cancel), the error is propagated so the pass aborts.
+func (e *Engine) mapRegistryRequestError(
+	ctx context.Context,
+	base containerResult,
+	op, target string,
+	err error,
+) (containerResult, error) {
+	if ctx.Err() != nil {
+		return containerResult{}, ctx.Err()
+	}
+	if errors.Is(err, registry.ErrNotFound) || errors.Is(err, registry.ErrUnauthorized) {
+		return e.skipped(base, "not found in registry / locally built"), nil
+	}
+	if errors.Is(err, registry.ErrRateLimited) {
+		return e.skipped(base, "registry rate limited, will retry next pass"), nil
+	}
+	if errors.Is(err, registry.ErrUnavailable) {
+		return e.skipped(base, "registry temporarily unavailable"), nil
+	}
+	if isTransientRegistryError(err) {
+		return e.skipped(base, fmt.Sprintf("%s timeout/network error, will retry next pass", op)), nil
+	}
+	return containerResult{}, fmt.Errorf("%s for %s: %w", op, target, err)
+}
+
+func isTransientRegistryError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+	return false
 }
 
 func (e *Engine) logContainerResult(r containerResult) {

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -388,28 +389,41 @@ func (a *App) Run(ctx context.Context, cfg *config.Config, configPath, statePath
 
 	if state.MissingFile(statePath) {
 		if err := trigger(scheduled, "initial check (no state file)", true); err != nil {
-			return err
+			return a.finishRun(ctx, err)
 		}
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return a.finishRun(ctx, ctx.Err())
 		case <-scheduleCh:
 			if err := trigger(scheduled, "scheduled check", true); err != nil {
-				return err
+				return a.finishRun(ctx, err)
 			}
 		case <-sigUSR1:
 			if err := trigger(scheduled, "forced scheduled check (SIGUSR1)", true); err != nil {
-				return err
+				return a.finishRun(ctx, err)
 			}
 		case <-sigUSR2:
 			if err := trigger(forceCheck, "forced full check (SIGUSR2)", false); err != nil {
-				return err
+				return a.finishRun(ctx, err)
 			}
 		}
 	}
+}
+
+// finishRun treats context.Canceled as a clean exit when ctx itself was canceled
+// (SIGINT/SIGTERM via signal.NotifyContext). Other errors pass through unchanged.
+func (a *App) finishRun(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
+		a.log.Info("shutting down (signal received)")
+		return nil
+	}
+	return err
 }
 
 func newScheduleSource(cfg *config.Config, log *slog.Logger) (<-chan time.Time, func(), func(), error) {

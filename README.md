@@ -57,7 +57,7 @@ Requires read access to the Docker socket and network reachability to registries
 | [Registries](docs/registries.md) | Public hosts, private OCI, `registry_proxy`, rate limits |
 | [Notifications](docs/notifications.md) | Telegram, Discord, webhook, templates, examples |
 | [Deployment](docs/deployment.md) | Docker image, compose, volumes, healthcheck, signals |
-| [Commands](docs/commands.md) | `check`, `run`, `health`, flags, state behavior |
+| [Commands](docs/commands.md) | `check`, `run`, `links`, `health`, flags, state behavior |
 
 Full annotated example: [`config.example.yaml`](config.example.yaml).
 

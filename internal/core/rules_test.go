@@ -79,6 +79,82 @@ func TestConfigRuleResolverSlashRepoUnchanged(t *testing.T) {
 	}
 }
 
+func TestConfigRuleResolverModeDigestOnly(t *testing.T) {
+	res, err := NewConfigRuleResolver([]config.RuleConfig{
+		{Image: "valkey/valkey", Mode: "digest"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := res.RuleFor(RuleQuery{Host: imageref.DockerHubHost, Image: "valkey/valkey"})
+	if rule == nil {
+		t.Fatal("expected mode-only rule")
+	}
+	if rule.Mode != RuleModeDigest {
+		t.Fatalf("mode = %q", rule.Mode)
+	}
+	if rule.Include != nil {
+		t.Fatal("expected nil include for mode-only rule")
+	}
+}
+
+func TestLabelRuleResolverModeDigest(t *testing.T) {
+	res := NewLabelRuleResolver(nil)
+	rule := res.RuleFor(RuleQuery{
+		Image:  "valkey/valkey",
+		Labels: map[string]string{labelMode: "digest"},
+	})
+	if rule == nil || rule.Mode != RuleModeDigest {
+		t.Fatalf("rule = %+v", rule)
+	}
+}
+
+func TestLabelRuleResolverInvalidModeIgnored(t *testing.T) {
+	res := NewLabelRuleResolver(nil)
+	rule := res.RuleFor(RuleQuery{
+		Image:  "valkey/valkey",
+		Labels: map[string]string{labelMode: "semver"},
+	})
+	if rule != nil {
+		t.Fatalf("expected nil rule for invalid mode alone, got %+v", rule)
+	}
+}
+
+func TestLabelRuleResolverInvalidModeKeepsInclude(t *testing.T) {
+	res := NewLabelRuleResolver(nil)
+	rule := res.RuleFor(RuleQuery{
+		Image: "chatwoot/chatwoot",
+		Labels: map[string]string{
+			labelInclude: "^v",
+			labelMode:    "foo",
+		},
+	})
+	if rule == nil || rule.Include == nil || rule.Mode != "" {
+		t.Fatalf("expected include-only rule, got %+v", rule)
+	}
+}
+
+func TestChainConfigRuleBlocksLabelMode(t *testing.T) {
+	cfg, err := NewConfigRuleResolver([]config.RuleConfig{
+		{Image: "valkey/valkey", Include: "^9"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain := NewChainRuleResolver(cfg, NewLabelRuleResolver(nil))
+	rule := chain.RuleFor(RuleQuery{
+		Host:   imageref.DockerHubHost,
+		Image:  "valkey/valkey",
+		Labels: map[string]string{labelMode: "digest"},
+	})
+	if rule == nil {
+		t.Fatal("expected config rule")
+	}
+	if rule.Mode != "" || rule.Include == nil {
+		t.Fatalf("config include rule must win whole; got mode=%q include=%v", rule.Mode, rule.Include != nil)
+	}
+}
+
 func TestConfigRuleResolverGHCRRepo(t *testing.T) {
 	res, err := NewConfigRuleResolver([]config.RuleConfig{
 		{Image: "gethomepage/homepage", Include: "^v"},
@@ -94,3 +170,4 @@ func TestConfigRuleResolverGHCRRepo(t *testing.T) {
 		t.Fatal("expected same repo path on docker hub if ever used")
 	}
 }
+

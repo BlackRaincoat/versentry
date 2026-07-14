@@ -49,6 +49,8 @@ Default image command: `versentry run -c /etc/versentry/config.yaml`.
 
 `restart: unless-stopped` is recommended.
 
+**Invalid config + restart:** if `config.yaml` fails to parse, the process exits before the logger starts. With `restart: unless-stopped` / `always`, Docker restarts it immediately, so `docker logs` may show a batch of identical `Error: parse config: …` lines and no timestamped INFO. That is expected — fix the YAML; it is not Versentry printing the same error multiple times in one run.
+
 ## Docker socket security
 
 Access to `docker.sock` is equivalent to root on the host. Run Versentry only on hosts you trust.
@@ -94,6 +96,8 @@ environment:
 ## State volume
 
 Mount a volume at `/data` so container restarts do not re-notify every pending update. The image sets `VERSENTRY_STATE_FILE=/data/state.json` — no `state_file` key in config unless you need a custom path.
+
+Upgrading from Versentry versions that used state file `version` 1 resets notification history (format change to per-container keys). A one-time re-notification of pending updates is possible; see [Configuration — notification state](configuration.md#notification-state-versentry-run).
 
 ```yaml
 volumes:

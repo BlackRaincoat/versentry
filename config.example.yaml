@@ -80,13 +80,16 @@ notifiers:
 # Env: VERSENTRY_DISCORD_WEBHOOK_URL
 
 # --- Rules (optional) ---
-# Per-image tag filters. Per-container: versentry.include label. Opt-out: versentry.watch=false.
+# Per-image include filters and/or mode: digest. Per-container: versentry.include / versentry.mode.
+# Opt-out: versentry.watch=false. Config rule for an image overrides labels entirely — see docs/rules.md.
 #
 # rules:
 #   - image: "postgres"
 #     include: "^17\\.\\d+-alpine3\\.\\d+$"
 #   - image: "chatwoot/chatwoot"
 #     include: "^v\\d+\\.\\d+\\.\\d+-ce$"
+#   - image: "valkey/valkey"
+#     mode: digest   # floating tag rebuilds (e.g. 9-alpine), not semver "newer"
 
 # --- Timeouts ---
 timeouts:
