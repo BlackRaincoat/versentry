@@ -54,7 +54,7 @@ func TestModeDigestPath(t *testing.T) {
 	}
 	rules, err := NewConfigRuleResolver([]config.RuleConfig{
 		{Image: "valkey/valkey", Mode: "digest"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestModeDigestWithIncludeWarnsAndIgnoresInclude(t *testing.T) {
 	}
 	rules, err := NewConfigRuleResolver([]config.RuleConfig{
 		{Image: "valkey/valkey", Mode: "digest", Include: "^9-alpine$"},
-	})
+	}, log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,12 +151,43 @@ func TestModeDigestWithIncludeWarnsAndIgnoresInclude(t *testing.T) {
 	if reg.listCalls != 0 {
 		t.Fatal("include must not trigger ListTags under mode=digest")
 	}
-	if !strings.Contains(warnBuf.String(), "include ignored: mode=digest") {
+	if !strings.Contains(warnBuf.String(), "include ignored: track=digest") {
 		t.Fatalf("expected include-ignored WARN, got %q", warnBuf.String())
 	}
 }
 
-func TestLabelModeDigestForcesDigest(t *testing.T) {
+func TestLabelTrackDigestForcesDigest(t *testing.T) {
+	reg := &modeTestRegistry{
+		host:         imageref.DockerHubHost,
+		remoteDigest: "sha256:remote",
+	}
+	eng := NewEngine(
+		&modeTestProvider{localDigest: "sha256:local"},
+		nil,
+		config.Timeouts{},
+		slog.Default(),
+		NewLabelRuleResolver(slog.Default()),
+	)
+	eng.registries = append(eng.registries, reg)
+
+	c := model.Container{
+		Name:     "valkey",
+		ImageRef: "valkey/valkey:9-alpine",
+		Labels:   map[string]string{labelTrack: "digest"},
+	}
+	result, err := eng.checkContainer(context.Background(), c, registrypass.New(slog.Default()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg.digestCalls != 1 || reg.listCalls != 0 {
+		t.Fatalf("digestCalls=%d listCalls=%d", reg.digestCalls, reg.listCalls)
+	}
+	if result.Status != statusUpdate {
+		t.Fatalf("status = %s", result.Status)
+	}
+}
+
+func TestLabelModeDigestAliasForcesDigest(t *testing.T) {
 	reg := &modeTestRegistry{
 		host:         imageref.DockerHubHost,
 		remoteDigest: "sha256:remote",

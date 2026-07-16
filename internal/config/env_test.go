@@ -130,6 +130,66 @@ func TestApplyEnvOverridesWebhook(t *testing.T) {
 	}
 }
 
+func TestApplyEnvOverridesGotify(t *testing.T) {
+	t.Setenv(envGotifyURL, "https://push.example.com")
+	t.Setenv(envGotifyToken, "env-app-token")
+	t.Setenv(envGotifyProxy, "socks5://127.0.0.1:1080")
+
+	cfg := &Config{
+		Notifiers: []PluginConfig{{
+			Type: "gotify",
+			Config: map[string]any{
+				"url":   "https://push.old.example",
+				"token": "yaml-token",
+			},
+		}},
+	}
+	ApplyEnvOverrides(cfg)
+
+	g := cfg.Notifiers[0].Config
+	if g["url"] != "https://push.example.com" {
+		t.Fatalf("url = %v", g["url"])
+	}
+	if g["token"] != "env-app-token" {
+		t.Fatalf("token = %v", g["token"])
+	}
+	if g["proxy"] != "socks5://127.0.0.1:1080" {
+		t.Fatalf("proxy = %v", g["proxy"])
+	}
+}
+
+func TestApplyEnvOverridesNtfy(t *testing.T) {
+	t.Setenv(envNtfyURL, "https://ntfy.example.com")
+	t.Setenv(envNtfyTopic, "env-topic")
+	t.Setenv(envNtfyToken, "tk_env")
+	t.Setenv(envNtfyProxy, "socks5://127.0.0.1:1080")
+
+	cfg := &Config{
+		Notifiers: []PluginConfig{{
+			Type: "ntfy",
+			Config: map[string]any{
+				"url":   "https://ntfy.sh",
+				"topic": "yaml-topic",
+			},
+		}},
+	}
+	ApplyEnvOverrides(cfg)
+
+	n := cfg.Notifiers[0].Config
+	if n["url"] != "https://ntfy.example.com" {
+		t.Fatalf("url = %v", n["url"])
+	}
+	if n["topic"] != "env-topic" {
+		t.Fatalf("topic = %v", n["topic"])
+	}
+	if n["token"] != "tk_env" {
+		t.Fatalf("token = %v", n["token"])
+	}
+	if n["proxy"] != "socks5://127.0.0.1:1080" {
+		t.Fatalf("proxy = %v", n["proxy"])
+	}
+}
+
 func TestScheduleLocationRequiresTimezone(t *testing.T) {
 	t.Setenv("TZ", "")
 	cfg := &Config{Schedule: "0 3 * * *"}

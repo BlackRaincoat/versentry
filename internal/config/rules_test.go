@@ -28,7 +28,15 @@ func TestValidateRulesDistinctImagesOK(t *testing.T) {
 	}
 }
 
-func TestValidateRulesModeDigestOnlyOK(t *testing.T) {
+func TestValidateRulesTrackDigestOnlyOK(t *testing.T) {
+	if err := validateRules([]RuleConfig{
+		{Image: "valkey/valkey", Track: "digest"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateRulesModeDigestAliasOK(t *testing.T) {
 	if err := validateRules([]RuleConfig{
 		{Image: "valkey/valkey", Mode: "digest"},
 	}); err != nil {
@@ -36,27 +44,51 @@ func TestValidateRulesModeDigestOnlyOK(t *testing.T) {
 	}
 }
 
-func TestValidateRulesModeDigestWithIncludeOK(t *testing.T) {
+func TestValidateRulesModeAndTrackFails(t *testing.T) {
+	err := validateRules([]RuleConfig{
+		{Image: "valkey/valkey", Mode: "digest", Track: "digest"},
+	})
+	if err == nil {
+		t.Fatal("expected conflict when mode and track both set")
+	}
+	if !strings.Contains(err.Error(), "use track only") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateRulesTrackDigestWithIncludeOK(t *testing.T) {
 	if err := validateRules([]RuleConfig{
-		{Image: "valkey/valkey", Mode: "digest", Include: "^9-alpine$"},
+		{Image: "valkey/valkey", Track: "digest", Include: "^9-alpine$"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestValidateRulesUnknownModeFails(t *testing.T) {
+func TestValidateRulesUnknownTrackFails(t *testing.T) {
 	err := validateRules([]RuleConfig{
-		{Image: "valkey/valkey", Mode: "semver"},
+		{Image: "valkey/valkey", Track: "semver"},
 	})
 	if err == nil {
-		t.Fatal("expected unknown mode error")
+		t.Fatal("expected unknown track error")
 	}
 	if !strings.Contains(err.Error(), `only "digest" supported`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestValidateRulesEmptyIncludeWithoutModeFails(t *testing.T) {
+func TestValidateRulesUnknownModeAliasFails(t *testing.T) {
+	err := validateRules([]RuleConfig{
+		{Image: "valkey/valkey", Mode: "semver"},
+	})
+	if err == nil {
+		t.Fatal("expected unknown track error for deprecated mode alias")
+	}
+	if !strings.Contains(err.Error(), `only "digest" supported`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateRulesEmptyIncludeWithoutTrackFails(t *testing.T) {
 	err := validateRules([]RuleConfig{
 		{Image: "valkey/valkey"},
 	})
@@ -65,5 +97,21 @@ func TestValidateRulesEmptyIncludeWithoutModeFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "include is required") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestEffectiveRuleTrackPrefersTrackOverMode(t *testing.T) {
+	got := EffectiveRuleTrack(RuleConfig{Track: "digest", Mode: "digest"})
+	if got != "digest" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestRuleUsesDeprecatedMode(t *testing.T) {
+	if !RuleUsesDeprecatedMode(RuleConfig{Mode: "digest"}) {
+		t.Fatal("expected deprecated mode")
+	}
+	if RuleUsesDeprecatedMode(RuleConfig{Track: "digest"}) {
+		t.Fatal("track field is not deprecated")
 	}
 }

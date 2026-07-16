@@ -1,6 +1,6 @@
 # Versentry
 
-Monitor Docker image updates and get notified — without pulling or restarting containers. Versentry compares running containers against OCI registries (semver tags and digest drift on floating tags) and sends alerts through Telegram, Discord, webhooks, or stdout. Notify-only by design.
+Monitor Docker image updates and get notified — without pulling or restarting containers. Versentry compares running containers against OCI registries (semver tags and digest drift on floating tags) and sends alerts through Telegram, Discord, Gotify, ntfy, webhooks, or stdout. Notify-only by design.
 
 Works on self-hosted hosts; Telegram notifier traffic can use a SOCKS5 or HTTP proxy.
 
@@ -8,7 +8,7 @@ Works on self-hosted hosts; Telegram notifier traffic can use a SOCKS5 or HTTP p
 
 - **Tag filtering** — central `rules:` in config and per-container `versentry.include` labels
 - **Any OCI registry** — public hosts (Docker Hub, GHCR, Quay, GitLab) work out of the box; private and self-hosted via `type: oci`
-- **Notifications** — Telegram, Discord, generic webhook, stdout; optional proxy on HTTP notifiers
+- **Notifications** — Telegram, Discord, Gotify, ntfy, generic webhook, stdout; optional proxy on HTTP notifiers
 - **Delivery modes** — `simple` or `digest`; Go `text/template` overrides where supported
 - **Detection** — semver (same-major) and digest comparison for non-semver tags (`latest`, …)
 - **Notify-only** — never modifies containers or images on the host

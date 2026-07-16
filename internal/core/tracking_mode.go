@@ -7,19 +7,20 @@ import (
 )
 
 // resolveTrackingMode chooses semver vs digest without contacting the registry.
-// Shared by checkContainer and Links so mode rules stay in one place.
+// Shared by checkContainer and Links so track rules stay in one place.
 func resolveTrackingMode(
 	rules RuleResolver,
 	log *slog.Logger,
-	host, repo, tag string,
+	host, repo, tag, container string,
 	labels map[string]string,
 ) (mode string, rule *Rule) {
 	if rules != nil {
-		rule = rules.RuleFor(RuleQuery{Host: host, Image: repo, Labels: labels})
+		rule = rules.RuleFor(RuleQuery{Host: host, Image: repo, Container: container, Labels: labels})
 	}
-	if rule != nil && rule.Mode == RuleModeDigest {
+	if rule != nil && rule.Track == RuleTrackDigest {
 		if rule.Include != nil && log != nil {
-			log.Warn("include ignored: mode=digest (include applies only in semver mode)",
+			log.Warn("include ignored: track=digest (include applies only in semver mode)",
+				"container", container,
 				"image", repo,
 			)
 		}

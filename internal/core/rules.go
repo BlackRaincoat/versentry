@@ -13,24 +13,26 @@ import (
 // Label keys for per-container rules (same semantics as config rules[]).
 const (
 	labelInclude = "versentry.include"
-	labelMode    = "versentry.mode"
+	labelTrack   = "versentry.track"
+	labelMode    = "versentry.mode" // deprecated alias for labelTrack
 )
 
-// RuleModeDigest forces digest detection for an image/container.
-const RuleModeDigest = "digest"
+// RuleTrackDigest forces digest detection for an image/container.
+const RuleTrackDigest = "digest"
 
-// Rule is a resolved rule for one image: optional include filter and/or mode.
+// Rule is a resolved rule for one image: optional include filter and/or track.
 type Rule struct {
 	Image   string
-	Include *regexp.Regexp // nil when unset (e.g. mode-only digest rule)
-	Mode    string         // "" or RuleModeDigest
+	Include *regexp.Regexp // nil when unset (e.g. track-only digest rule)
+	Track   string         // "" or RuleTrackDigest
 }
 
 // RuleQuery is the input for rule resolution: image identity plus container labels.
 type RuleQuery struct {
-	Host   string
-	Image  string
-	Labels map[string]string
+	Host      string
+	Image     string
+	Container string
+	Labels    map[string]string
 }
 
 // RuleResolver finds the effective rule for a container/image.
@@ -45,9 +47,14 @@ type ConfigRuleResolver struct {
 }
 
 // NewConfigRuleResolver builds a resolver from validated config rules.
-func NewConfigRuleResolver(rules []config.RuleConfig) (*ConfigRuleResolver, error) {
+func NewConfigRuleResolver(rules []config.RuleConfig, log *slog.Logger) (*ConfigRuleResolver, error) {
 	byImage := make(map[string]*Rule, len(rules))
 	for i, rc := range rules {
+		if config.RuleUsesDeprecatedMode(rc) && log != nil {
+			log.Warn("rules[].mode is deprecated, use track instead",
+				"image", rc.Image,
+			)
+		}
 		var re *regexp.Regexp
 		if rc.Include != "" {
 			compiled, err := regexp.Compile(rc.Include)
@@ -56,11 +63,11 @@ func NewConfigRuleResolver(rules []config.RuleConfig) (*ConfigRuleResolver, erro
 			}
 			re = compiled
 		}
-		mode := strings.TrimSpace(rc.Mode)
+		track := config.EffectiveRuleTrack(rc)
 		byImage[rc.Image] = &Rule{
 			Image:   rc.Image,
 			Include: re,
-			Mode:    mode,
+			Track:   track,
 		}
 	}
 	return &ConfigRuleResolver{byImage: byImage}, nil
@@ -79,7 +86,7 @@ func (r *ConfigRuleResolver) RuleFor(q RuleQuery) *Rule {
 	return nil
 }
 
-// LabelRuleResolver resolves rules from versentry.include / versentry.mode labels.
+// LabelRuleResolver resolves rules from versentry.include / versentry.track labels.
 type LabelRuleResolver struct {
 	log *slog.Logger
 }
@@ -93,7 +100,7 @@ func NewLabelRuleResolver(log *slog.Logger) *LabelRuleResolver {
 }
 
 // RuleFor returns a rule from container labels, or nil if absent/invalid.
-// Invalid include or mode is logged and ignored so one bad label cannot break the pass.
+// Invalid include or track is logged and ignored so one bad label cannot break the pass.
 func (r *LabelRuleResolver) RuleFor(q RuleQuery) *Rule {
 	if r == nil || len(q.Labels) == 0 {
 		return nil
@@ -104,6 +111,7 @@ func (r *LabelRuleResolver) RuleFor(q RuleQuery) *Rule {
 		re, err := regexp.Compile(raw)
 		if err != nil {
 			r.log.Warn("invalid versentry.include label, ignoring",
+				"container", q.Container,
 				"image", q.Image,
 				"include", raw,
 				"error", err,
@@ -113,26 +121,58 @@ func (r *LabelRuleResolver) RuleFor(q RuleQuery) *Rule {
 		}
 	}
 
-	mode := ""
-	if raw := strings.TrimSpace(q.Labels[labelMode]); raw != "" {
-		if raw != RuleModeDigest {
-			r.log.Warn("invalid versentry.mode label, ignoring",
-				"image", q.Image,
-				"mode", raw,
-			)
-		} else {
-			mode = RuleModeDigest
-		}
-	}
+	track := resolveLabelTrack(r.log, q, q.Labels[labelTrack], q.Labels[labelMode])
 
-	if include == nil && mode == "" {
+	if include == nil && track == "" {
 		return nil
 	}
 	return &Rule{
 		Image:   q.Image,
 		Include: include,
-		Mode:    mode,
+		Track:   track,
 	}
+}
+
+func resolveLabelTrack(log *slog.Logger, q RuleQuery, trackRaw, modeRaw string) string {
+	trackRaw = strings.TrimSpace(trackRaw)
+	modeRaw = strings.TrimSpace(modeRaw)
+
+	track := ""
+	if trackRaw != "" {
+		if trackRaw != RuleTrackDigest {
+			log.Warn("invalid versentry.track label, ignoring",
+				"container", q.Container,
+				"image", q.Image,
+				"track", trackRaw,
+			)
+		} else {
+			track = RuleTrackDigest
+		}
+	}
+
+	if modeRaw == "" {
+		return track
+	}
+	if modeRaw != RuleTrackDigest {
+		log.Warn("invalid versentry.mode label, ignoring",
+			"container", q.Container,
+			"image", q.Image,
+			"mode", modeRaw,
+		)
+		return track
+	}
+	if track != "" {
+		log.Warn("versentry.mode and versentry.track both set; using track",
+			"container", q.Container,
+			"image", q.Image,
+		)
+		return track
+	}
+	log.Warn("versentry.mode is deprecated, use versentry.track instead",
+		"container", q.Container,
+		"image", q.Image,
+	)
+	return RuleTrackDigest
 }
 
 // ChainRuleResolver tries sources in order; first non-nil rule wins.

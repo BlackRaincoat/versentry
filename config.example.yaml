@@ -12,8 +12,9 @@
 # --- Provider ---
 provider:
   type: docker
-  # config:                          # optional; default uses the Docker socket from the environment
-  #   socket: "/var/run/docker.sock"
+# Optional; default uses the Docker socket from the environment.
+#   config:
+#     socket: "/var/run/docker.sock"
 
 # --- Registries (optional) ---
 # Public hosts (Docker Hub, GHCR, Quay, GitLab) work without this block.
@@ -37,19 +38,20 @@ notifiers:
   - type: telegram
     config:
       parse_mode: HTML
-      # mode: digest
-      # proxy: "socks5://user:pass@host:1080"
-      # item_template: |
-      #   <b>{{.Container}}</b>: {{.Change}}{{if .URL}}
-      #   {{.URL}}{{end}}
-      # digest_template: |
-      #   📦 {{.Instance}}{{if gt .Count 1}} — {{.Count}} updates{{end}}
-      #   {{.Items}}
-      # api_url: "https://api.telegram.org"
-      # timeout: "10s"
-      # retries: 3
-      # retry_delay: "1s"
 # Env: VERSENTRY_TELEGRAM_TOKEN, VERSENTRY_TELEGRAM_CHAT_ID, VERSENTRY_TELEGRAM_PROXY
+# Optional telegram fields:
+#      mode: digest
+#      proxy: "socks5://user:pass@host:1080"
+#      item_template: |
+#        <b>{{.Container}}</b>: {{.Change}}{{if .URL}}
+#        {{.URL}}{{end}}
+#      digest_template: |
+#        📦 {{.Instance}}{{if gt .Count 1}} — {{.Count}} updates{{end}}
+#        {{.Items}}
+#      api_url: "https://api.telegram.org"
+#      timeout: "10s"
+#      retries: 3
+#      retry_delay: "1s"
 
 #  - type: webhook
 #    config:
@@ -79,8 +81,41 @@ notifiers:
 #      retry_delay: "1s"
 # Env: VERSENTRY_DISCORD_WEBHOOK_URL
 
+# Gotify: optional templates; blank line between items -> |+ or "...\n\n" (see docs/notifications.md).
+#  - type: gotify
+#    config:
+#      url: "https://push.example.com"
+#      token: "AppTokenHere"
+#      priority: 5
+#      mode: digest
+#      proxy: "socks5://user:pass@host:1080"
+#      item_template: "**{{.Container}}**: {{.Change}}\n\n"
+#      digest_template: "{{.Items}}"
+#      timeout: "10s"
+#      retries: 3
+#      retry_delay: "1s"
+# Env: VERSENTRY_GOTIFY_URL, VERSENTRY_GOTIFY_TOKEN, VERSENTRY_GOTIFY_PROXY
+
+# ntfy (https://ntfy.sh or self-hosted): topic is a secret on public servers.
+# click is set only in simple mode. Default templates use [url](url) markdown links.
+#  - type: ntfy
+#    config:
+#      url: "https://ntfy.sh"
+#      topic: "my-secret-topic"
+#      priority: 3
+#      tags: ["package"]
+#      mode: digest
+#      token: ""
+#      proxy: "socks5://user:pass@host:1080"
+#      item_template: "**{{.Container}}**: {{.Change}}\n\n"
+#      digest_template: "{{.Items}}"
+#      timeout: "10s"
+#      retries: 3
+#      retry_delay: "1s"
+# Env: VERSENTRY_NTFY_URL, VERSENTRY_NTFY_TOPIC, VERSENTRY_NTFY_TOKEN, VERSENTRY_NTFY_PROXY
+
 # --- Rules (optional) ---
-# Per-image include filters and/or mode: digest. Per-container: versentry.include / versentry.mode.
+# Per-image include filters and/or track: digest. Per-container: versentry.include / versentry.track.
 # Opt-out: versentry.watch=false. Config rule for an image overrides labels entirely — see docs/rules.md.
 #
 # rules:
@@ -89,7 +124,8 @@ notifiers:
 #   - image: "chatwoot/chatwoot"
 #     include: "^v\\d+\\.\\d+\\.\\d+-ce$"
 #   - image: "valkey/valkey"
-#     mode: digest   # floating tag rebuilds (e.g. 9-alpine), not semver "newer"
+#     track: digest
+# floating tag rebuilds (e.g. 9-alpine), not semver "newer"
 
 # --- Timeouts ---
 timeouts:
@@ -102,7 +138,8 @@ timeouts:
 # --- Scheduling ---
 interval: 12h
 # schedule: "0 12 * * *"
-# timezone: Europe/Paris   # cron only; ignored with interval-only mode
+# timezone: Europe/Paris
+# cron only; ignored with interval-only mode
 # Cron needs timezone in config or TZ env — see docs/configuration.md#tz-vs-timezone
 # TZ in compose/docker is separate: it sets log timestamps for the whole container.
 

@@ -82,7 +82,7 @@ func linkRowFor(e *Engine, c model.Container) LinkRow {
 		}
 	}
 
-	mode, _ := resolveTrackingMode(e.rules, e.log, parsed.Host, parsed.Repo, parsed.Tag, c.Labels)
+	mode, _ := resolveTrackingMode(e.rules, e.log, parsed.Host, parsed.Repo, parsed.Tag, name, c.Labels)
 	link := imageweb.URL(parsed.Host, parsed.Repo, parsed.Tag, c.Labels, mode)
 	if link == "" {
 		link = "(no url)"

@@ -15,6 +15,8 @@ import (
 	"github.com/BlackRaincoat/versentry/internal/logging"
 	"github.com/BlackRaincoat/versentry/internal/version"
 	_ "github.com/BlackRaincoat/versentry/internal/notifier/discord"
+	_ "github.com/BlackRaincoat/versentry/internal/notifier/gotify"
+	_ "github.com/BlackRaincoat/versentry/internal/notifier/ntfy"
 	_ "github.com/BlackRaincoat/versentry/internal/notifier/stdout"
 	_ "github.com/BlackRaincoat/versentry/internal/notifier/telegram"
 	_ "github.com/BlackRaincoat/versentry/internal/notifier/webhook"
@@ -75,6 +77,7 @@ func newCheckCmd(configPath, logLevel *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			version.LogStartup(slog.Default())
 			return app.Check(cmd.Context())
 		},
 	}
@@ -99,6 +102,7 @@ func newRunCmd(configPath, logLevel *string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("init app: %w", err)
 			}
+			version.LogStartup(slog.Default())
 
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()

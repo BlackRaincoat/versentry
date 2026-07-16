@@ -28,7 +28,7 @@ Secrets (Telegram token, webhook URLs, registry credentials) go in **environment
 | `provider` | yes | — | Container source |
 | `notifiers` | yes (≥1) | — | Notification channels — see [Notifications](notifications.md) |
 | `registries` | no | auto public hosts | Extra / private OCI registries — see [Registries](registries.md) |
-| `rules` | no | — | Per-image `include` filters and optional `mode: digest` — see [Rules](rules.md) |
+| `rules` | no | — | Per-image `include` filters and optional `track: digest` — see [Rules](rules.md) |
 | `instance_name` | no | see below | Name shown in notification headers |
 | `timeouts.provider` | no | `10s` | Docker API timeout |
 | `timeouts.registry` | no | `30s` | Registry API timeout |
@@ -83,11 +83,11 @@ Optional per-image tag include filters (config and/or container labels). Details
 
 ## Notifiers
 
-At least one notifier is required. Types: `stdout`, `telegram`, `webhook`, `discord`. Details: [Notifications](notifications.md).
+At least one notifier is required. Types: `stdout`, `telegram`, `webhook`, `discord`, `gotify`, `ntfy`. Details: [Notifications](notifications.md).
 
 Use **one entry per channel** (e.g. `stdout` + `telegram`, or `telegram` + `discord`). The list is not meant for multiple Telegram bots with different credentials — use a single `type: telegram` block and set secrets via env.
 
-Default `mode` and template keys differ by notifier (`telegram`: `item_template`/`digest_template`; `discord`/`webhook`: optional full-body `template`). All notifiers default to **`digest`**. See [Notifications — defaults by channel](notifications.md#defaults-by-channel).
+Default `mode` and template keys differ by notifier (`telegram` / `gotify` / `ntfy`: `item_template`/`digest_template`; `discord`/`webhook`: optional full-body `template`). All notifiers default to **`digest`**. See [Notifications — defaults by channel](notifications.md#defaults-by-channel).
 
 Links in alerts come from the image `org.opencontainers.image.source` label and tracking mode — limits (missing label, wrapper repos, semver vs digest) are in [Notifications — Notification URLs](notifications.md#notification-urls).
 
@@ -106,6 +106,13 @@ YAML holds structure and non-secret options. **Env overrides YAML** for sensitiv
 | `VERSENTRY_WEBHOOK_URL` | `url` on the `webhook` notifier |
 | `VERSENTRY_WEBHOOK_AUTHORIZATION` | `Authorization` header on the `webhook` notifier |
 | `VERSENTRY_WEBHOOK_PROXY` | `proxy` on the `webhook` notifier |
+| `VERSENTRY_GOTIFY_URL` | `url` on the `gotify` notifier |
+| `VERSENTRY_GOTIFY_TOKEN` | `token` on the `gotify` notifier |
+| `VERSENTRY_GOTIFY_PROXY` | `proxy` on the `gotify` notifier |
+| `VERSENTRY_NTFY_URL` | `url` on the `ntfy` notifier |
+| `VERSENTRY_NTFY_TOPIC` | `topic` on the `ntfy` notifier |
+| `VERSENTRY_NTFY_TOKEN` | `token` on the `ntfy` notifier (optional Bearer) |
+| `VERSENTRY_NTFY_PROXY` | `proxy` on the `ntfy` notifier |
 | `VERSENTRY_REGISTRY_USERNAME` | `username` on every configured `oci` registry |
 | `VERSENTRY_REGISTRY_TOKEN` | `token` on every configured `oci` registry |
 | `VERSENTRY_REGISTRY_PROXY` | `registry_proxy` (HTTP or `socks5://` for all registries) |
@@ -248,7 +255,7 @@ A notifier failure (e.g. bad Telegram token) logs **ERROR** but **does not stop*
 
 1. List running containers (Docker socket); skip containers with `versentry.watch=false`.
 2. Parse image ref → registry host + repo + tag.
-3. If rule/label sets `mode: digest` → compare local vs remote digest for the current tag (see [Rules](rules.md#mode-digest)).
+3. If rule/label sets `track: digest` → compare local vs remote digest for the current tag (see [Rules](rules.md#track-digest)).
 4. Else if **semver tag:** list tags → apply `include` filter if any → newest same-major tag → notify if newer.
 5. Else **non-semver tag** (`latest`, …): compare local manifest digest vs registry tag digest.
 6. Batch all updates from the pass → notifiers (`run` may filter already-notified targets before step 6).

@@ -68,6 +68,13 @@ Typical `.env` / compose `environment`:
 | `VERSENTRY_WEBHOOK_URL` | Generic webhook endpoint |
 | `VERSENTRY_WEBHOOK_AUTHORIZATION` | `Authorization` header for webhook |
 | `VERSENTRY_WEBHOOK_PROXY` | Proxy for webhook HTTP client |
+| `VERSENTRY_GOTIFY_URL` | Gotify server base URL |
+| `VERSENTRY_GOTIFY_TOKEN` | Gotify application token |
+| `VERSENTRY_GOTIFY_PROXY` | Proxy for Gotify HTTP client |
+| `VERSENTRY_NTFY_URL` | ntfy server base URL |
+| `VERSENTRY_NTFY_TOPIC` | ntfy topic |
+| `VERSENTRY_NTFY_TOKEN` | Optional ntfy Bearer token |
+| `VERSENTRY_NTFY_PROXY` | Proxy for ntfy HTTP client |
 | `VERSENTRY_REGISTRY_USERNAME` | Username for configured `oci` registries |
 | `VERSENTRY_REGISTRY_TOKEN` | Token/password for configured `oci` registries |
 | `VERSENTRY_REGISTRY_PROXY` | Proxy for all registry API traffic |

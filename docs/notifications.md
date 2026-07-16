@@ -4,7 +4,7 @@ Notifiers receive **all updates from one check pass** as a batch. Empty pass →
 
 Back to [README](../README.md) · [Configuration overview](configuration.md)
 
-Implemented types: `stdout`, `telegram`, `webhook`, `discord`.
+Implemented types: `stdout`, `telegram`, `webhook`, `discord`, `gotify`, `ntfy`.
 
 ## Defaults by channel
 
@@ -15,7 +15,11 @@ Each notifier has its own config block and defaults. Templates are **not** share
 | `telegram` | `digest` | `item_template` + `digest_template` (HTML) |
 | `discord` | `digest` | single `template` = full webhook JSON body (optional) |
 | `webhook` | `digest` | single `template` = full HTTP body (optional) |
+| `gotify` | `digest` | `item_template` + `digest_template` (markdown) |
+| `ntfy` | `digest` | `item_template` + `digest_template` (markdown) |
 | `stdout` | — | none (fixed log lines) |
+
+**Why two template shapes?** Telegram, Gotify, and ntfy send a string body (`text` / `message`); other fields are fixed by code (`chat_id`, `parse_mode`, Gotify/ntfy `title`/`priority`, ntfy `tags`/`click`). Templates only shape that text — `item_template` lines are concatenated, and `digest_template` wraps the batch. Discord and webhook emit the **entire** JSON body from one `template`: Discord’s content lives in `embeds` (no separate message string), and webhook is whatever shape a third-party API expects, so you iterate `{{.Updates}}` inside that one template instead of splitting item/digest.
 
 **Default `digest`:** one delivery per check pass (instance header + all updates). Set `mode: simple` when you want one message/POST per container update.
 
@@ -49,7 +53,7 @@ Set credentials via env (`VERSENTRY_TELEGRAM_TOKEN`, `VERSENTRY_TELEGRAM_CHAT_ID
 
 ## webhook
 
-Generic HTTP POST (ntfy, Gotify, custom hooks). Shared HTTP retry helper with Telegram. Logs only the **host** of the URL, never path or query (tokens often live there).
+Generic HTTP POST (custom hooks). Shared HTTP retry helper with Telegram. Logs only the **host** of the URL, never path or query (tokens often live there). For Gotify or ntfy prefer the first-class `gotify` / `ntfy` notifiers below.
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
@@ -79,13 +83,124 @@ notifiers:
         Authorization: "Bearer ${WEBHOOK_TOKEN}"
 ```
 
+## gotify
+
+First-class [Gotify](https://gotify.net) push notifier (self-hosted). Create an **application** in the Gotify UI (**Apps → Create application**) and use its token — one application per Versentry instance is typical. Versentry POSTs JSON to `{url}/message` with header `X-Gotify-Key`.
+
+Set `url`, `token`, and optional `proxy` via env (`VERSENTRY_GOTIFY_URL`, `VERSENTRY_GOTIFY_TOKEN`, `VERSENTRY_GOTIFY_PROXY`) or YAML — see [Configuration — environment variables](configuration.md#environment-variables).
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `url` | yes | — | Gotify server base (`https://push.example.com`); `/message` is appended if missing |
+| `token` | yes | — | Application token |
+| `priority` | no | `5` | Gotify priority `0`–`10` (clients treat ~4–7 as normal) |
+| `mode` | no | `digest` | `simple` (one push per update) or `digest` (one push per batch) |
+| `item_template` | no | built-in | Go `text/template` for one update (markdown) |
+| `digest_template` | no | built-in | Wrapper for a batch of items |
+| `proxy` | no | — | Optional `socks5://…` or `http://…` |
+| `timeout` | no | `10s` | HTTP timeout per attempt |
+| `retries` | no | `3` | HTTP attempts per POST |
+| `retry_delay` | no | `1s` | Initial backoff between retries |
+
+**Title / priority / extras:** still owned by code and config — not the templates. Title is `Versentry` for one update, `Versentry: N updates` for a batch (instance name is not in the title; Gotify apps are usually per-host already). Body uses markdown via `extras.client::display.contentType = text/markdown`. Priority is a single config value for all update events.
+
+**Templates (same shape as Telegram):** `item_template` gets `ItemData`; `digest_template` gets `Instance`, `Count`, `Items`. Field values are escaped for markdown; markup in the template is kept. `{{.URL}}` is **not** escaped (so `[{{.URL}}]({{.URL}})` stays clickable in the Gotify Android app).
+
+Spacing between digest items is owned by `item_template` (same as Telegram). Gotify’s **web UI** (GFM) collapses a single `\n` into a space — use a blank line between items. In YAML that means `|+:` (keep trailing blank lines); plain `|` strips them. Quoted `"…\n\n"` also works. See [Spacing between digest items](#spacing-between-digest-items).
+
+**Default templates:**
+
+```
+**{{.Container}}**: {{.Change}}{{if .URL}}
+[{{.URL}}]({{.URL}}){{end}}
+
+```
+
+```
+{{.Items}}
+```
+
+(`simple` mode still runs the digest wrapper with a single item — same as Telegram.)
+
+Shared HTTP retry helper with other notifiers (network/`5xx` backoff; `429` + `Retry-After`; config errors not retried). Logs only the **host**, never the token.
+
 ```yaml
-  - type: webhook
+notifiers:
+  - type: gotify
     config:
-      url: "https://ntfy.example.com/my-topic"
-      mode: simple
-      template: |
-        {"topic":"my-topic","title":"{{.Container}}","message":"{{.Change}}"}
+      # or VERSENTRY_GOTIFY_URL + VERSENTRY_GOTIFY_TOKEN env
+      url: "https://push.example.com"
+      token: "AppTokenHere"
+      priority: 5
+      mode: digest
+      # proxy: "socks5://user:pass@host:1080"
+      # Blank line between items: use |+ (plain | strips it) or "…\n\n"
+      # item_template: |+
+      #   **{{.Container}}**: {{.Change}}
+      #
+      # digest_template: |
+      #   {{.Items}}
+```
+
+## ntfy
+
+First-class [ntfy](https://ntfy.sh) push notifier (public `ntfy.sh` or self-hosted). Pick a **topic** name and subscribe to it in the ntfy app or web UI — topics are created on the fly. On a public server the topic is effectively a password: use a long unguessable name and treat it like a secret.
+
+Versentry POSTs JSON to the **server base** (`url`, no topic in the path) with `topic` in the body. Logs only the **host**, never the topic or token (same caution as webhook URLs that embed secrets).
+
+Set `url`, `topic`, optional `token`, and optional `proxy` via env (`VERSENTRY_NTFY_URL`, `VERSENTRY_NTFY_TOPIC`, `VERSENTRY_NTFY_TOKEN`, `VERSENTRY_NTFY_PROXY`) or YAML — see [Configuration — environment variables](configuration.md#environment-variables).
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `url` | yes | — | ntfy server base (`https://ntfy.sh` or self-hosted); **without** topic path |
+| `topic` | yes | — | Publish topic (secret on public servers) |
+| `token` | no | — | Optional access token → `Authorization: Bearer …` (self-hosted auth) |
+| `priority` | no | `3` | ntfy priority `1`–`5` (`1` min … `5` max; `3` = default) |
+| `tags` | no | `["package"]` | ntfy tags (some map to emoji in clients) |
+| `mode` | no | `digest` | `simple` (one push per update) or `digest` (one push per batch) |
+| `item_template` | no | built-in | Go `text/template` for one update (markdown) |
+| `digest_template` | no | built-in | Wrapper for a batch of items |
+| `proxy` | no | — | Optional `socks5://…` or `http://…` |
+| `timeout` | no | `10s` | HTTP timeout per attempt |
+| `retries` | no | `3` | HTTP attempts per POST |
+| `retry_delay` | no | `1s` | Initial backoff between retries |
+
+**Title / priority / tags / click / markdown:** owned by code and config — not the templates. Title is `Versentry` for one update, `Versentry: N updates` for a batch. Body is markdown (`"markdown": true`). **`click`** (URL opened when the notification is tapped) is set only in **`simple`** mode when that update has a non-empty notification URL — one update, one link. In **`digest`** mode `click` is omitted (several updates share one notification); keep links in the message text. Action buttons are not supported (notify-only; nothing useful to attach).
+
+**Templates (same shape as Gotify/Telegram):** `item_template` gets `ItemData`; `digest_template` gets `Instance`, `Count`, `Items`. Field values are escaped for markdown; markup in the template is kept. `{{.URL}}` is **not** escaped (so `[{{.URL}}]({{.URL}})` stays clickable in ntfy web and Android — bare `https://…` is not).
+
+Spacing between digest items follows the same YAML rules as Gotify (`|+` or `"…\n\n"` for a blank line). See [Spacing between digest items](#spacing-between-digest-items).
+
+**Default templates:**
+
+```
+**{{.Container}}**: {{.Change}}{{if .URL}}
+[{{.URL}}]({{.URL}}){{end}}
+
+```
+
+```
+{{.Items}}
+```
+
+(`simple` mode still runs the digest wrapper with a single item — same as Gotify/Telegram.)
+
+Shared HTTP retry helper with other notifiers (network/`5xx` backoff; `429` + `Retry-After`; config errors not retried).
+
+```yaml
+notifiers:
+  - type: ntfy
+    config:
+      # or VERSENTRY_NTFY_URL + VERSENTRY_NTFY_TOPIC (+ optional TOKEN) env
+      url: "https://ntfy.sh"
+      topic: "my-secret-topic"
+      priority: 3
+      tags: ["package"]
+      mode: digest
+      # token: "tk_..."   # self-hosted with auth
+      # proxy: "socks5://user:pass@host:1080"
+      # item_template: "**{{.Container}}**: {{.Change}}\n\n"
+      # digest_template: "{{.Items}}"
 ```
 
 ## discord
@@ -180,12 +295,12 @@ notifiers:
         {"embeds":[{"title":"📦 {{.Instance}}","description":"{{.Count}} update(s) — see logs for details","color":3447003}]}
 ```
 
-## Modes (telegram, webhook, discord)
+## Modes (telegram, webhook, discord, gotify, ntfy)
 
 | `mode` | Behavior |
 |--------|----------|
 | `simple` | One delivery per update |
-| `digest` | One summary for the whole pass (default for telegram, discord, webhook) |
+| `digest` | One summary for the whole pass (default for telegram, discord, webhook, gotify, ntfy) |
 
 ## Notification URLs
 
@@ -207,8 +322,10 @@ Shared field builders live in `internal/notifier/format` (`ItemData`, `Payload`)
 | `telegram` | `item_template`, `digest_template` | values HTML-escaped; markup in template kept |
 | `discord` | `template` (full JSON body) | no auto-escape in custom template; built-in embed mode escapes markdown |
 | `webhook` | `template` (full body) | no HTML escape |
+| `gotify` | `item_template`, `digest_template` | values markdown-escaped; markup in template kept; `{{.URL}}` not escaped |
+| `ntfy` | `item_template`, `digest_template` | values markdown-escaped; markup in template kept; `{{.URL}}` not escaped |
 
-### `ItemData` (telegram templates; discord/webhook `simple` template)
+### `ItemData` (telegram / gotify / ntfy templates; discord/webhook `simple` template)
 
 | Variable | Meaning |
 |----------|---------|
@@ -222,7 +339,7 @@ Shared field builders live in `internal/notifier/format` (`ItemData`, `Payload`)
 | `{{.LatestTag}}` | Newer tag (empty for digest-only updates) |
 | `{{.Host}}` | Registry host |
 
-### Digest wrapper (telegram `digest_template`)
+### Digest wrapper (telegram / gotify / ntfy `digest_template`)
 
 `{{.Instance}}`, `{{.Count}}`, `{{.Items}}` — `Items` is pre-rendered item lines concatenated with **no** separator.
 
@@ -252,7 +369,7 @@ With one update, the count suffix is omitted (`📦 hostname` only).
 
 ## Spacing between digest items
 
-Items are concatenated with an empty separator. All spacing between entries is owned by `item_template` — there is no `item_separator` option.
+Applies to **telegram**, **gotify**, and **ntfy** (`item_template` / `digest_template`). Items are concatenated with an empty separator — there is no `item_separator` option.
 
 **Compact (default):** the built-in item template ends with a single newline, so entries form consecutive lines with no blank line between them.
 
@@ -262,7 +379,7 @@ item_template: |
   {{.URL}}{{end}}
 ```
 
-**Blank line between items:** use YAML block scalar with the keep-chomp modifier (`|+`). Plain `|` strips a final blank line.
+**Blank line between items:** use YAML block scalar with the keep-chomp modifier (`|+`). Plain `|` strips a final blank line (so a “blank line” you type at the end of the block never reaches the template).
 
 ```yaml
 item_template: |+
@@ -270,6 +387,8 @@ item_template: |+
 ```
 
 (The empty line at the end of the block is intentional — that is the blank line between digest entries after concatenation.)
+
+For Gotify and ntfy, a blank line also helps where the client treats a single newline as a space. Equivalent to `|+:`: `item_template: "**{{.Container}}**: {{.Change}}\n\n"`.
 
 ## Proxy (Telegram)
 

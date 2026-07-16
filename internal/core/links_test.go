@@ -15,25 +15,25 @@ import (
 func TestResolveTrackingModeDigestRule(t *testing.T) {
 	rules, err := NewConfigRuleResolver([]config.RuleConfig{
 		{Image: "valkey/valkey", Mode: "digest"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mode, _ := resolveTrackingMode(rules, nil, "index.docker.io", "valkey/valkey", "9-alpine", nil)
+	mode, _ := resolveTrackingMode(rules, nil, "index.docker.io", "valkey/valkey", "9-alpine", "cache", nil)
 	if mode != imageweb.ModeDigest {
 		t.Fatalf("mode = %q", mode)
 	}
 }
 
 func TestResolveTrackingModeSemverParsable(t *testing.T) {
-	mode, _ := resolveTrackingMode(nil, nil, "index.docker.io", "library/nginx", "1.25.0", nil)
+	mode, _ := resolveTrackingMode(nil, nil, "index.docker.io", "library/nginx", "1.25.0", "web", nil)
 	if mode != imageweb.ModeSemver {
 		t.Fatalf("mode = %q", mode)
 	}
 }
 
 func TestResolveTrackingModeNonSemver(t *testing.T) {
-	mode, _ := resolveTrackingMode(nil, nil, "index.docker.io", "pgvector/pgvector", "pg17-trixie", nil)
+	mode, _ := resolveTrackingMode(nil, nil, "index.docker.io", "pgvector/pgvector", "pg17-trixie", "db", nil)
 	if mode != imageweb.ModeDigest {
 		t.Fatalf("mode = %q", mode)
 	}
@@ -42,7 +42,7 @@ func TestResolveTrackingModeNonSemver(t *testing.T) {
 func TestWriteLinksTable(t *testing.T) {
 	rules, err := NewConfigRuleResolver([]config.RuleConfig{
 		{Image: "valkey/valkey", Mode: "digest"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

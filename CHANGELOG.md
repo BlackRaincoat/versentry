@@ -4,6 +4,22 @@ All notable changes to Versentry are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follows [SemVer](https://semver.org/).
 
+## [1.2.0] - 2026-07-17
+
+### Changed
+
+- Rules / labels: `mode: digest` renamed to **`track: digest`** (`rules[].track`, label `versentry.track`) to avoid collision with notifier `config.mode: digest|simple`. The old names still work with a **WARN** and will be removed in a future major release.
+
+### Added
+
+- Gotify notifier (`type: gotify`) — self-hosted push via `POST /message` + `X-Gotify-Key`; `priority` (default 5), markdown body, `mode: digest|simple`, optional proxy, `item_template` / `digest_template` (Telegram-shaped); env `VERSENTRY_GOTIFY_URL` / `_TOKEN` / `_PROXY`
+- ntfy notifier (`type: ntfy`) — public or self-hosted push via JSON `POST` to server base (`topic` in body); `priority` 1–5 (default 3), `tags` (default `package`), markdown body, optional Bearer `token`, `click` in `simple` only, `item_template` / `digest_template` (Gotify-shaped); env `VERSENTRY_NTFY_URL` / `_TOPIC` / `_TOKEN` / `_PROXY`
+- `versentry run` / `check` log binary identity at start: `versentry starting version=… commit=…` (ldflags; local builds show `version=dev`, `commit=unknown`)
+
+### Fixed
+
+- Deterministic semver tag choice when several tags coerce to the same version (e.g. `8.3` vs `8.3.0`): prefer the form of the running tag (v-prefix, then numeric component count, then suffix), not registry `ListTags` order. Existing installs may get a **one-time** re-notification if state stored a different spelling of the same version.
+
 ## [1.1.0] - 2026-07-15
 
 ### Added

@@ -180,7 +180,7 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 		return e.skipped(base, err.Error()), nil
 	}
 
-	mode, rule := resolveTrackingMode(e.rules, e.log, parsed.Host, parsed.Repo, parsed.Tag, c.Labels)
+	mode, rule := resolveTrackingMode(e.rules, e.log, parsed.Host, parsed.Repo, parsed.Tag, c.Name, c.Labels)
 	if mode == imageweb.ModeDigest {
 		return e.checkDigest(ctx, c, parsed, reg, pass)
 	}

@@ -1,6 +1,9 @@
 package core
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/BlackRaincoat/versentry/internal/config"
@@ -10,7 +13,7 @@ import (
 func TestConfigRuleResolverDockerHubShortName(t *testing.T) {
 	res, err := NewConfigRuleResolver([]config.RuleConfig{
 		{Image: "postgres", Include: "^17\\."},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +33,7 @@ func TestConfigRuleResolverDockerHubShortName(t *testing.T) {
 func TestConfigRuleResolverDockerHubLibraryNameBackwardCompat(t *testing.T) {
 	res, err := NewConfigRuleResolver([]config.RuleConfig{
 		{Image: "library/postgres", Include: "^17\\."},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +50,7 @@ func TestConfigRuleResolverDockerHubLibraryNameBackwardCompat(t *testing.T) {
 func TestConfigRuleResolverNoDockerHubAlias(t *testing.T) {
 	res, err := NewConfigRuleResolver([]config.RuleConfig{
 		{Image: "postgres", Include: "^17\\."},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +69,7 @@ func TestConfigRuleResolverNoDockerHubAlias(t *testing.T) {
 func TestConfigRuleResolverSlashRepoUnchanged(t *testing.T) {
 	res, err := NewConfigRuleResolver([]config.RuleConfig{
 		{Image: "chatwoot/chatwoot", Include: "^v"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,33 +82,109 @@ func TestConfigRuleResolverSlashRepoUnchanged(t *testing.T) {
 	}
 }
 
-func TestConfigRuleResolverModeDigestOnly(t *testing.T) {
+func TestConfigRuleResolverTrackDigestOnly(t *testing.T) {
 	res, err := NewConfigRuleResolver([]config.RuleConfig{
-		{Image: "valkey/valkey", Mode: "digest"},
-	})
+		{Image: "valkey/valkey", Track: "digest"},
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rule := res.RuleFor(RuleQuery{Host: imageref.DockerHubHost, Image: "valkey/valkey"})
 	if rule == nil {
-		t.Fatal("expected mode-only rule")
+		t.Fatal("expected track-only rule")
 	}
-	if rule.Mode != RuleModeDigest {
-		t.Fatalf("mode = %q", rule.Mode)
+	if rule.Track != RuleTrackDigest {
+		t.Fatalf("track = %q", rule.Track)
 	}
 	if rule.Include != nil {
-		t.Fatal("expected nil include for mode-only rule")
+		t.Fatal("expected nil include for track-only rule")
 	}
 }
 
-func TestLabelRuleResolverModeDigest(t *testing.T) {
+func TestConfigRuleResolverModeDigestAliasWarns(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	res, err := NewConfigRuleResolver([]config.RuleConfig{
+		{Image: "valkey/valkey", Mode: "digest"},
+	}, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := res.RuleFor(RuleQuery{Host: imageref.DockerHubHost, Image: "valkey/valkey"})
+	if rule == nil || rule.Track != RuleTrackDigest {
+		t.Fatalf("rule = %+v", rule)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "rules[].mode is deprecated, use track instead") {
+		t.Fatalf("expected deprecation WARN, got %q", out)
+	}
+	if !strings.Contains(out, "valkey/valkey") {
+		t.Fatalf("expected image in WARN, got %q", out)
+	}
+}
+
+func TestLabelRuleResolverTrackDigest(t *testing.T) {
+	res := NewLabelRuleResolver(nil)
+	rule := res.RuleFor(RuleQuery{
+		Container: "cache",
+		Image:     "valkey/valkey",
+		Labels:    map[string]string{labelTrack: "digest"},
+	})
+	if rule == nil || rule.Track != RuleTrackDigest {
+		t.Fatalf("rule = %+v", rule)
+	}
+}
+
+func TestLabelRuleResolverModeDigestAliasWarns(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	res := NewLabelRuleResolver(log)
+	rule := res.RuleFor(RuleQuery{
+		Container: "cache",
+		Image:     "valkey/valkey",
+		Labels:    map[string]string{labelMode: "digest"},
+	})
+	if rule == nil || rule.Track != RuleTrackDigest {
+		t.Fatalf("rule = %+v", rule)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "versentry.mode is deprecated, use versentry.track instead") {
+		t.Fatalf("expected deprecation WARN, got %q", out)
+	}
+	if !strings.Contains(out, "cache") {
+		t.Fatalf("expected container in WARN, got %q", out)
+	}
+}
+
+func TestLabelRuleResolverBothTrackAndModeUsesTrackWarns(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	res := NewLabelRuleResolver(log)
+	rule := res.RuleFor(RuleQuery{
+		Container: "cache",
+		Image:     "valkey/valkey",
+		Labels: map[string]string{
+			labelTrack: "digest",
+			labelMode:  "digest",
+		},
+	})
+	if rule == nil || rule.Track != RuleTrackDigest {
+		t.Fatalf("rule = %+v", rule)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "versentry.mode and versentry.track both set; using track") {
+		t.Fatalf("expected both-set WARN, got %q", out)
+	}
+}
+
+func TestLabelRuleResolverInvalidTrackIgnored(t *testing.T) {
 	res := NewLabelRuleResolver(nil)
 	rule := res.RuleFor(RuleQuery{
 		Image:  "valkey/valkey",
-		Labels: map[string]string{labelMode: "digest"},
+		Labels: map[string]string{labelTrack: "semver"},
 	})
-	if rule == nil || rule.Mode != RuleModeDigest {
-		t.Fatalf("rule = %+v", rule)
+	if rule != nil {
+		t.Fatalf("expected nil rule for invalid track alone, got %+v", rule)
 	}
 }
 
@@ -129,15 +208,15 @@ func TestLabelRuleResolverInvalidModeKeepsInclude(t *testing.T) {
 			labelMode:    "foo",
 		},
 	})
-	if rule == nil || rule.Include == nil || rule.Mode != "" {
+	if rule == nil || rule.Include == nil || rule.Track != "" {
 		t.Fatalf("expected include-only rule, got %+v", rule)
 	}
 }
 
-func TestChainConfigRuleBlocksLabelMode(t *testing.T) {
+func TestChainConfigRuleBlocksLabelTrack(t *testing.T) {
 	cfg, err := NewConfigRuleResolver([]config.RuleConfig{
 		{Image: "valkey/valkey", Include: "^9"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,20 +224,20 @@ func TestChainConfigRuleBlocksLabelMode(t *testing.T) {
 	rule := chain.RuleFor(RuleQuery{
 		Host:   imageref.DockerHubHost,
 		Image:  "valkey/valkey",
-		Labels: map[string]string{labelMode: "digest"},
+		Labels: map[string]string{labelTrack: "digest"},
 	})
 	if rule == nil {
 		t.Fatal("expected config rule")
 	}
-	if rule.Mode != "" || rule.Include == nil {
-		t.Fatalf("config include rule must win whole; got mode=%q include=%v", rule.Mode, rule.Include != nil)
+	if rule.Track != "" || rule.Include == nil {
+		t.Fatalf("config include rule must win whole; got track=%q include=%v", rule.Track, rule.Include != nil)
 	}
 }
 
 func TestConfigRuleResolverGHCRRepo(t *testing.T) {
 	res, err := NewConfigRuleResolver([]config.RuleConfig{
 		{Image: "gethomepage/homepage", Include: "^v"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,4 +249,3 @@ func TestConfigRuleResolverGHCRRepo(t *testing.T) {
 		t.Fatal("expected same repo path on docker hub if ever used")
 	}
 }
-

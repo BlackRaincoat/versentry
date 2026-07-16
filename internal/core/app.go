@@ -129,7 +129,7 @@ func NewApp(cfg *config.Config, log *slog.Logger) (*App, error) {
 		notifiers = append(notifiers, notifierSlot{typ: nc.Type, n: n})
 	}
 
-	configRules, err := NewConfigRuleResolver(cfg.Rules)
+	configRules, err := NewConfigRuleResolver(cfg.Rules, log)
 	if err != nil {
 		return nil, fmt.Errorf("rules: %w", err)
 	}

@@ -19,11 +19,12 @@ type PluginConfig struct {
 	Config map[string]any `yaml:"config"`
 }
 
-// RuleConfig is a per-image tag filter / detection mode from the Versentry config.
+// RuleConfig is a per-image tag filter / detection track from the Versentry config.
 type RuleConfig struct {
 	Image   string `yaml:"image"`
 	Include string `yaml:"include"`
-	Mode    string `yaml:"mode"` // optional; only "digest" is supported
+	Track   string `yaml:"track"` // optional; only "digest" is supported
+	Mode    string `yaml:"mode"`  // deprecated alias for track (digest only)
 }
 
 // Config is the top-level Versentry configuration loaded from YAML.
@@ -134,12 +135,17 @@ func validateRules(rules []RuleConfig) error {
 		if rule.Image == "" {
 			return fmt.Errorf("rules[%d]: image is required", i)
 		}
+		track := strings.TrimSpace(rule.Track)
 		mode := strings.TrimSpace(rule.Mode)
-		if mode != "" && mode != "digest" {
-			return fmt.Errorf("rules[%d]: unknown mode %q, only \"digest\" supported", i, rule.Mode)
+		if track != "" && mode != "" {
+			return fmt.Errorf("rules[%d]: both mode and track are set; use track only (image=%s)", i, rule.Image)
 		}
-		if rule.Include == "" && mode != "digest" {
-			return fmt.Errorf("rules[%d]: include is required unless mode is digest", i)
+		effective := EffectiveRuleTrack(rule)
+		if effective != "" && effective != "digest" {
+			return fmt.Errorf("rules[%d]: unknown track %q, only \"digest\" supported", i, effective)
+		}
+		if rule.Include == "" && effective != "digest" {
+			return fmt.Errorf("rules[%d]: include is required unless track is digest", i)
 		}
 		if rule.Include != "" {
 			if _, err := regexp.Compile(rule.Include); err != nil {
@@ -154,4 +160,17 @@ func validateRules(rules []RuleConfig) error {
 		}
 	}
 	return nil
+}
+
+// EffectiveRuleTrack returns the configured detection track (track, or deprecated mode alias).
+func EffectiveRuleTrack(rule RuleConfig) string {
+	if t := strings.TrimSpace(rule.Track); t != "" {
+		return t
+	}
+	return strings.TrimSpace(rule.Mode)
+}
+
+// RuleUsesDeprecatedMode reports whether the rule uses the deprecated mode field instead of track.
+func RuleUsesDeprecatedMode(rule RuleConfig) bool {
+	return strings.TrimSpace(rule.Track) == "" && strings.TrimSpace(rule.Mode) != ""
 }

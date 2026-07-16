@@ -31,7 +31,7 @@ Back to [README](../README.md) · [Configuration overview](configuration.md)
 
 Prints a table of notification URLs for **monitored** containers (same opt-out as checks: `versentry.watch=false` is omitted). Uses local data only — Docker list + image/container labels + rules — **no registry API**, no notifications, no state writes.
 
-Useful to verify Hub / GitHub / GHCR links after changing `mode: digest` or rules. How URLs are chosen (and when they are empty or point at a wrapper repo): [Notifications — Notification URLs](notifications.md#notification-urls).
+Useful to verify Hub / GitHub / GHCR links after changing `track: digest` or rules. How URLs are chosen (and when they are empty or point at a wrapper repo): [Notifications — Notification URLs](notifications.md#notification-urls).
 
 ```bash
 docker exec versentry versentry links -c /etc/versentry/config.yaml

@@ -15,6 +15,13 @@ const (
 	envWebhookURL           = "VERSENTRY_WEBHOOK_URL"
 	envWebhookAuthorization = "VERSENTRY_WEBHOOK_AUTHORIZATION"
 	envWebhookProxy         = "VERSENTRY_WEBHOOK_PROXY"
+	envGotifyURL            = "VERSENTRY_GOTIFY_URL"
+	envGotifyToken          = "VERSENTRY_GOTIFY_TOKEN"
+	envGotifyProxy          = "VERSENTRY_GOTIFY_PROXY"
+	envNtfyURL              = "VERSENTRY_NTFY_URL"
+	envNtfyTopic            = "VERSENTRY_NTFY_TOPIC"
+	envNtfyToken            = "VERSENTRY_NTFY_TOKEN"
+	envNtfyProxy            = "VERSENTRY_NTFY_PROXY"
 	envInstanceName         = "VERSENTRY_INSTANCE_NAME"
 	envRegistryProxy        = "VERSENTRY_REGISTRY_PROXY"
 	envRegistryUsername     = "VERSENTRY_REGISTRY_USERNAME"
@@ -36,6 +43,8 @@ func ApplyEnvOverrides(cfg *Config) {
 	applyTelegramEnv(cfg)
 	applyDiscordEnv(cfg)
 	applyWebhookEnv(cfg)
+	applyGotifyEnv(cfg)
+	applyNtfyEnv(cfg)
 }
 
 func applyInstanceNameEnv(cfg *Config) {
@@ -145,6 +154,64 @@ func applyWebhookEnv(cfg *Config) {
 			}
 			headers["Authorization"] = auth
 			cfg.Notifiers[i].Config["headers"] = headers
+		}
+	}
+}
+
+func applyGotifyEnv(cfg *Config) {
+	url := strings.TrimSpace(os.Getenv(envGotifyURL))
+	token := strings.TrimSpace(os.Getenv(envGotifyToken))
+	proxy := strings.TrimSpace(os.Getenv(envGotifyProxy))
+	if url == "" && token == "" && proxy == "" {
+		return
+	}
+
+	for i := range cfg.Notifiers {
+		if cfg.Notifiers[i].Type != "gotify" {
+			continue
+		}
+		if cfg.Notifiers[i].Config == nil {
+			cfg.Notifiers[i].Config = make(map[string]any)
+		}
+		if url != "" {
+			cfg.Notifiers[i].Config["url"] = url
+		}
+		if token != "" {
+			cfg.Notifiers[i].Config["token"] = token
+		}
+		if proxy != "" {
+			cfg.Notifiers[i].Config["proxy"] = proxy
+		}
+	}
+}
+
+func applyNtfyEnv(cfg *Config) {
+	url := strings.TrimSpace(os.Getenv(envNtfyURL))
+	topic := strings.TrimSpace(os.Getenv(envNtfyTopic))
+	token := strings.TrimSpace(os.Getenv(envNtfyToken))
+	proxy := strings.TrimSpace(os.Getenv(envNtfyProxy))
+	if url == "" && topic == "" && token == "" && proxy == "" {
+		return
+	}
+
+	for i := range cfg.Notifiers {
+		if cfg.Notifiers[i].Type != "ntfy" {
+			continue
+		}
+		if cfg.Notifiers[i].Config == nil {
+			cfg.Notifiers[i].Config = make(map[string]any)
+		}
+		if url != "" {
+			cfg.Notifiers[i].Config["url"] = url
+		}
+		if topic != "" {
+			cfg.Notifiers[i].Config["topic"] = topic
+		}
+		if token != "" {
+			cfg.Notifiers[i].Config["token"] = token
+		}
+		if proxy != "" {
+			cfg.Notifiers[i].Config["proxy"] = proxy
 		}
 	}
 }
