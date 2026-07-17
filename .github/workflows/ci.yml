@@ -13,7 +13,10 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # Floating minor — same policy as Dockerfile ARG GO_VERSION=1.25
+          # (latest 1.25.x patch). Do not use go-version-file: go.mod (that pins
+          # the language minimum 1.25.0 and diverges from the image toolchain).
+          go-version: "1.25"
           cache: true
 
       - name: Vet
@@ -21,3 +24,6 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

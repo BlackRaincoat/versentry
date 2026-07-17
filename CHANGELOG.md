@@ -4,6 +4,12 @@ All notable changes to Versentry are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+
+- Replace deprecated `github.com/docker/docker` with `github.com/moby/moby/client` (Docker Engine API client for 29.x). Removes the old SDK from the image Go SBOM so Docker Scout stops flagging **daemon-only** Moby findings (e.g. CVE-2026-34040 AuthZ bypass, CVE-2026-41567/41568/42306 `docker cp` / related, CVE-2025-54410 firewalld/iptables). Those affect the Engine process, not the client Versentry uses against the socket — this is scanner hygiene, not a Versentry exploit fix. Alpine/BusyBox base CVEs are unchanged (planned separately).
+
 ## [1.2.0] - 2026-07-17
 
 ### Changed
@@ -81,6 +87,7 @@ First public release.
 - Multi-arch Docker image (amd64, arm64)
 - `VERSENTRY_*` environment variable overrides for secrets and paths
 
+[1.2.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.2.0
 [1.1.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.1.0
 [1.0.2]: https://github.com/BlackRaincoat/versentry/releases/tag/1.0.2
 [1.0.1]: https://github.com/BlackRaincoat/versentry/releases/tag/v1.0.1

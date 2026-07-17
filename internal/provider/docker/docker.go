@@ -7,9 +7,8 @@ import (
 
 	"github.com/BlackRaincoat/versentry/internal/model"
 	"github.com/BlackRaincoat/versentry/internal/provider"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
 	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/moby/moby/client"
 )
 
 func init() {
@@ -31,7 +30,7 @@ func New(cfg map[string]any) (provider.Provider, error) {
 		opts = append(opts, client.WithHost("unix://"+socket))
 	}
 
-	cli, err := client.NewClientWithOpts(opts...)
+	cli, err := client.New(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("create docker client: %w", err)
 	}
@@ -41,7 +40,7 @@ func New(cfg map[string]any) (provider.Provider, error) {
 
 // Ping checks that the Docker API is reachable (lightweight health probe).
 func (p *Provider) Ping(ctx context.Context) error {
-	if _, err := p.client.Ping(ctx); err != nil {
+	if _, err := p.client.Ping(ctx, client.PingOptions{}); err != nil {
 		return fmt.Errorf("docker ping: %w", err)
 	}
 	return nil
@@ -50,14 +49,14 @@ func (p *Provider) Ping(ctx context.Context) error {
 // ListRunning returns all currently running containers.
 // Labels merge image OCI labels with container labels (container wins on key clash).
 func (p *Provider) ListRunning(ctx context.Context) ([]model.Container, error) {
-	containers, err := p.client.ContainerList(ctx, container.ListOptions{})
+	result, err := p.client.ContainerList(ctx, client.ContainerListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list containers: %w", err)
 	}
 
 	imageLabels := make(map[string]map[string]string)
-	out := make([]model.Container, 0, len(containers))
-	for _, c := range containers {
+	out := make([]model.Container, 0, len(result.Items))
+	for _, c := range result.Items {
 		name := ""
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")
@@ -88,7 +87,7 @@ func (p *Provider) labelsForContainer(
 		imgLabels, ok := cache[imageID]
 		if !ok {
 			imgLabels = map[string]string{}
-			if img, _, err := p.client.ImageInspectWithRaw(ctx, imageID); err == nil && img.Config != nil {
+			if img, err := p.client.ImageInspect(ctx, imageID); err == nil && img.Config != nil {
 				for k, v := range img.Config.Labels {
 					imgLabels[k] = v
 				}
@@ -108,12 +107,12 @@ func (p *Provider) labelsForContainer(
 
 // LocalDigest returns the repo digest of the image currently used by the container.
 func (p *Provider) LocalDigest(ctx context.Context, c model.Container, repo string) (string, error) {
-	inspect, err := p.client.ContainerInspect(ctx, c.ID)
+	inspect, err := p.client.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})
 	if err != nil {
 		return "", fmt.Errorf("inspect container %s: %w", c.ID, err)
 	}
 
-	img, _, err := p.client.ImageInspectWithRaw(ctx, inspect.Image)
+	img, err := p.client.ImageInspect(ctx, inspect.Container.Image)
 	if err != nil {
 		return "", fmt.Errorf("inspect image for container %s: %w", c.Name, err)
 	}
