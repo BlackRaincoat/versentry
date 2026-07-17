@@ -4,7 +4,7 @@ All notable changes to Versentry are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follows [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [1.2.1] - 2026-07-17
 
 ### Security
 
@@ -87,6 +87,7 @@ First public release.
 - Multi-arch Docker image (amd64, arm64)
 - `VERSENTRY_*` environment variable overrides for secrets and paths
 
+[1.2.1]: https://github.com/BlackRaincoat/versentry/releases/tag/1.2.1
 [1.2.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.2.0
 [1.1.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.1.0
 [1.0.2]: https://github.com/BlackRaincoat/versentry/releases/tag/1.0.2
