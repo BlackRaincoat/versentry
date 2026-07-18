@@ -44,7 +44,7 @@ COPY --from=build /out/versentry /usr/local/bin/versentry
 
 # HEALTHCHECK runs the probe directly (ENTRYPOINT is not applied to it).
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD ["/usr/local/bin/versentry", "health", "-c", "/etc/versentry/config.yaml"]
+    CMD ["/usr/local/bin/versentry", "health"]
 
 ENTRYPOINT ["/usr/local/bin/versentry"]
-CMD ["run", "-c", "/etc/versentry/config.yaml"]
+CMD ["run"]

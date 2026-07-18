@@ -12,8 +12,8 @@ import (
 
 	"github.com/BlackRaincoat/versentry/internal/config"
 	"github.com/BlackRaincoat/versentry/internal/core/registrypass"
-	"github.com/BlackRaincoat/versentry/internal/imageweb"
 	"github.com/BlackRaincoat/versentry/internal/imageref"
+	"github.com/BlackRaincoat/versentry/internal/imageweb"
 	"github.com/BlackRaincoat/versentry/internal/model"
 	"github.com/BlackRaincoat/versentry/internal/provider"
 	"github.com/BlackRaincoat/versentry/internal/registry"
@@ -42,34 +42,38 @@ type containerResult struct {
 
 // Engine orchestrates container discovery and version comparison.
 type Engine struct {
-	provider     provider.Provider
-	registries   []registry.Registry
-	timeouts     config.Timeouts
-	log          *slog.Logger
-	tagSelector  TagSelector
-	ruleSelector TagSelector
-	rules        RuleResolver
+	provider          provider.Provider
+	registries        []registry.Registry
+	timeouts          config.Timeouts
+	log               *slog.Logger
+	tagSelector       TagSelector
+	ruleSelector      TagSelector
+	rules             RuleResolver
+	excludeContainers map[string]struct{} // exclude_containers set; absent → label only
 }
 
 // NewEngine wires the core check loop.
+// excludeContainers is optional (nil = label-only watch opt-out).
 func NewEngine(
 	prov provider.Provider,
 	registries []registry.Registry,
 	timeouts config.Timeouts,
 	log *slog.Logger,
 	rules RuleResolver,
+	excludeContainers map[string]struct{},
 ) *Engine {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Engine{
-		provider:     prov,
-		registries:   registries,
-		timeouts:     timeouts,
-		log:          log,
-		tagSelector:  DefaultTagSelector{},
-		ruleSelector: RuleTagSelector{},
-		rules:        rules,
+		provider:          prov,
+		registries:        registries,
+		timeouts:          timeouts,
+		log:               log,
+		tagSelector:       DefaultTagSelector{},
+		ruleSelector:      RuleTagSelector{},
+		rules:             rules,
+		excludeContainers: excludeContainers,
 	}
 }
 
@@ -90,7 +94,8 @@ func (e *Engine) RunOnce(ctx context.Context) ([]model.UpdateAvailable, []string
 		e.log.Warn("empty container list, state prune skipped")
 	}
 
-	monitored, excluded := filterByWatch(containers, e.log)
+	warnMissingExcludeContainers(containers, e.excludeContainers, e.log)
+	monitored, excluded := filterByWatch(containers, e.excludeContainers, e.log)
 	e.log.Info("listed running containers",
 		"count", len(containers),
 		"monitored", len(monitored),

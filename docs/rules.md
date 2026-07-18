@@ -2,6 +2,8 @@
 
 Tag filters **narrow** candidates; semver still picks the newest matching tag in the **same major** (pre-release tags are kept when a rule is active, because suffixes like `-alpine3.24` are part of the line). Optional `track: digest` forces digest tracking for floating tags that still parse as semver.
 
+This page is the **image** addressing axis (`rules[]` — detection). For **container** opt-out (`exclude_containers` / `versentry.watch`), see [Configuration — Container scope](configuration.md#container-scope-opt-out). Overview of both axes: [Addressing axes](configuration.md#addressing-axes-image-vs-container).
+
 Back to [README](../README.md) · [Configuration overview](configuration.md)
 
 ## Two sources (priority)
@@ -10,7 +12,9 @@ Back to [README](../README.md) · [Configuration overview](configuration.md)
 2. **Container labels** `versentry.include` / `versentry.track` — that container only
 3. Neither → default detection (semver if the tag parses; otherwise digest)
 
-**Config wins over labels — whole rule, not field-by-field.** If an image has a rule in config `rules:`, labels (`versentry.include`, `versentry.track`) for that image are **ignored**. The config rule overrides entirely, not per field. To set `track: digest` for an image that already has a config rule, add `track` on that config rule itself — not on a label. Labels apply only to images **without** a config rule.
+**Config wins over labels — whole rule, not field-by-field.** If an image has a rule in config `rules:`, labels (`versentry.include`, `versentry.track`) for that image are **ignored** for **every** container running that image. The config rule overrides entirely, not per field. To set `track: digest` for an image that already has a config rule, add `track` on that config rule itself — not on a label. Labels apply only to images **without** a config rule.
+
+**Practical consequence:** with a shared `rules` entry for `postgres`, you cannot give two Postgres containers different `include`/`track` via labels. Exclude one container from monitoring with `exclude_containers` (or `versentry.watch=false`) instead.
 
 Invalid regex / unknown `track` in config → fail at startup. Invalid label values → WARN and ignore (that field; pass continues).
 

@@ -29,19 +29,20 @@ type RuleConfig struct {
 
 // Config is the top-level Versentry configuration loaded from YAML.
 type Config struct {
-	Provider     PluginConfig   `yaml:"provider"`
-	Registries   []PluginConfig `yaml:"registries"`
-	Notifiers    []PluginConfig `yaml:"notifiers"`
-	Timeouts     Timeouts       `yaml:"timeouts"`
-	Interval     Duration       `yaml:"interval"`
-	Schedule     string         `yaml:"schedule"`
-	StateFile    string         `yaml:"state_file"`
-	LogLevel     string         `yaml:"log_level"`
-	Rules        []RuleConfig   `yaml:"rules"`
-	InstanceName  string         `yaml:"instance_name"`
-	Timezone      string         `yaml:"timezone"`
-	RegistryProxy string         `yaml:"registry_proxy"`
-	HealthMaxAge  Duration       `yaml:"health_max_age"`
+	Provider          PluginConfig   `yaml:"provider"`
+	Registries        []PluginConfig `yaml:"registries"`
+	Notifiers         []PluginConfig `yaml:"notifiers"`
+	Timeouts          Timeouts       `yaml:"timeouts"`
+	Interval          Duration       `yaml:"interval"`
+	Schedule          string         `yaml:"schedule"`
+	StateFile         string         `yaml:"state_file"`
+	LogLevel          string         `yaml:"log_level"`
+	Rules             []RuleConfig   `yaml:"rules"`
+	ExcludeContainers []string       `yaml:"exclude_containers"`
+	InstanceName      string         `yaml:"instance_name"`
+	Timezone          string         `yaml:"timezone"`
+	RegistryProxy     string         `yaml:"registry_proxy"`
+	HealthMaxAge      Duration       `yaml:"health_max_age"`
 }
 
 var scheduleParser = cron.NewParser(
@@ -100,6 +101,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("at least one notifier is required")
 	}
 	if err := validateRules(cfg.Rules); err != nil {
+		return nil, err
+	}
+	if _, _, err := ExcludeContainerSet(cfg.ExcludeContainers); err != nil {
 		return nil, err
 	}
 	if cfg.Schedule != "" {
@@ -173,4 +177,31 @@ func EffectiveRuleTrack(rule RuleConfig) string {
 // RuleUsesDeprecatedMode reports whether the rule uses the deprecated mode field instead of track.
 func RuleUsesDeprecatedMode(rule RuleConfig) bool {
 	return strings.TrimSpace(rule.Track) == "" && strings.TrimSpace(rule.Mode) != ""
+}
+
+// ExcludeContainerSet builds a set of exact Docker container names to exclude from monitoring.
+// Names are trimmed. Empty entries are an error. Duplicate names are kept once; the second
+// return value lists unique duplicates (for optional WARN — not a config error).
+func ExcludeContainerSet(names []string) (map[string]struct{}, []string, error) {
+	if len(names) == 0 {
+		return nil, nil, nil
+	}
+	out := make(map[string]struct{}, len(names))
+	var dups []string
+	dupSeen := make(map[string]struct{})
+	for i, raw := range names {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			return nil, nil, fmt.Errorf("exclude_containers[%d]: name is required", i)
+		}
+		if _, ok := out[name]; ok {
+			if _, logged := dupSeen[name]; !logged {
+				dups = append(dups, name)
+				dupSeen[name] = struct{}{}
+			}
+			continue
+		}
+		out[name] = struct{}{}
+	}
+	return out, dups, nil
 }

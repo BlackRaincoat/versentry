@@ -16,25 +16,29 @@ Back to [README](../README.md) · [Configuration overview](configuration.md)
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-c`, `--config` | `config.yaml` | Path to config file |
+| `-c`, `--config` | `/etc/versentry/config.yaml` | Path to config file |
 | `--log-level` | (from config, else `info`) | `debug`, `info`, `warn`, `error` — overrides `log_level` in config |
 
 ```bash
-./versentry check --log-level debug
-./versentry run -c /etc/versentry/config.yaml
-./versentry links -c /etc/versentry/config.yaml
-./versentry health -c /etc/versentry/config.yaml
+# Inside the container (default path is already mounted):
+docker exec versentry versentry check
+docker exec versentry versentry links
+docker exec versentry versentry health
+
+# Local binary / custom path:
+./versentry check -c ./config.yaml --log-level debug
+./versentry run -c /path/to/config.yaml
 ./versentry version
 ```
 
 ## `links`
 
-Prints a table of notification URLs for **monitored** containers (same opt-out as checks: `versentry.watch=false` is omitted). Uses local data only — Docker list + image/container labels + rules — **no registry API**, no notifications, no state writes.
+Prints a table of notification URLs for **monitored** containers (same opt-out as checks: `exclude_containers` / `versentry.watch=false`). Uses local data only — Docker list + image/container labels + rules — **no registry API**, no notifications, no state writes.
 
 Useful to verify Hub / GitHub / GHCR links after changing `track: digest` or rules. How URLs are chosen (and when they are empty or point at a wrapper repo): [Notifications — Notification URLs](notifications.md#notification-urls).
 
 ```bash
-docker exec versentry versentry links -c /etc/versentry/config.yaml
+docker exec versentry versentry links
 ```
 
 Columns: `CONTAINER`, `IMAGE:TAG`, `MODE` (`semver` / `digest` / `error`), `URL` (`(no url)` when empty). Table on stdout; logs on stderr.

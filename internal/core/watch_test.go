@@ -14,19 +14,21 @@ func testLogger() *slog.Logger {
 }
 
 func TestShouldMonitorDefaults(t *testing.T) {
-	if !ShouldMonitor(nil, nil, "c") {
+	c := model.Container{Name: "c"}
+	if !ShouldMonitor(c, nil, nil) {
 		t.Fatal("nil labels should monitor")
 	}
-	if !ShouldMonitor(map[string]string{}, nil, "c") {
+	c.Labels = map[string]string{}
+	if !ShouldMonitor(c, nil, nil) {
 		t.Fatal("empty labels should monitor")
 	}
 }
 
-func TestShouldMonitorExplicitValues(t *testing.T) {
+func TestShouldMonitorExplicitLabelValues(t *testing.T) {
 	cases := []struct {
-		value  string
-		want   bool
-		warn   bool
+		value string
+		want  bool
+		warn  bool
 	}{
 		{"true", true, false},
 		{"false", false, false},
@@ -48,9 +50,10 @@ func TestShouldMonitorExplicitValues(t *testing.T) {
 			var buf bytes.Buffer
 			log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-			got := ShouldMonitor(map[string]string{labelWatch: tc.value}, log, "svc")
+			c := model.Container{Name: "svc", Labels: map[string]string{labelWatch: tc.value}}
+			got := ShouldMonitor(c, nil, log)
 			if got != tc.want {
-				t.Fatalf("ShouldMonitor(%q) = %v, want %v", tc.value, got, tc.want)
+				t.Fatalf("ShouldMonitor(label=%q) = %v, want %v", tc.value, got, tc.want)
 			}
 
 			out := buf.String()
@@ -64,14 +67,45 @@ func TestShouldMonitorExplicitValues(t *testing.T) {
 	}
 }
 
-func TestFilterByWatch(t *testing.T) {
+func TestShouldMonitorExcludeListORLabel(t *testing.T) {
+	exclude := map[string]struct{}{"chatwoot-notify": {}}
+
+	listed := model.Container{Name: "chatwoot-notify", Labels: map[string]string{}}
+	if ShouldMonitor(listed, exclude, nil) {
+		t.Fatal("name in exclude_containers must be excluded")
+	}
+
+	byLabel := model.Container{
+		Name:   "other",
+		Labels: map[string]string{labelWatch: "false"},
+	}
+	if ShouldMonitor(byLabel, exclude, nil) {
+		t.Fatal("label watch=false must still exclude")
+	}
+
+	// Label says true, but name is excluded → still excluded (OR of opt-outs)
+	listedWithTrue := model.Container{
+		Name:   "chatwoot-notify",
+		Labels: map[string]string{labelWatch: "true"},
+	}
+	if ShouldMonitor(listedWithTrue, exclude, nil) {
+		t.Fatal("exclude_containers must exclude even when label is true")
+	}
+
+	ok := model.Container{Name: "app", Labels: map[string]string{}}
+	if !ShouldMonitor(ok, exclude, nil) {
+		t.Fatal("name not excluded and no label must be monitored")
+	}
+}
+
+func TestFilterByWatchLabelOnly(t *testing.T) {
 	containers := []model.Container{
 		{Name: "app", ImageRef: "nginx:latest", Labels: map[string]string{}},
 		{Name: "sidecar", ImageRef: "redis:7", Labels: map[string]string{labelWatch: "false"}},
 		{Name: "worker", ImageRef: "app:1.0", Labels: map[string]string{labelWatch: "true"}},
 	}
 
-	monitored, excluded := filterByWatch(containers, testLogger())
+	monitored, excluded := filterByWatch(containers, nil, testLogger())
 	if excluded != 1 {
 		t.Fatalf("excluded = %d, want 1", excluded)
 	}
@@ -80,5 +114,34 @@ func TestFilterByWatch(t *testing.T) {
 	}
 	if monitored[0].Name != "app" || monitored[1].Name != "worker" {
 		t.Fatalf("monitored names = %q, %q", monitored[0].Name, monitored[1].Name)
+	}
+}
+
+func TestFilterByWatchExcludeList(t *testing.T) {
+	containers := []model.Container{
+		{Name: "chatwoot-notify", ImageRef: "postgres:16", Labels: map[string]string{}},
+		{Name: "app", ImageRef: "nginx:latest", Labels: map[string]string{}},
+	}
+	exclude := map[string]struct{}{"chatwoot-notify": {}}
+	monitored, excluded := filterByWatch(containers, exclude, testLogger())
+	if excluded != 1 || len(monitored) != 1 || monitored[0].Name != "app" {
+		t.Fatalf("monitored=%v excluded=%d", monitored, excluded)
+	}
+}
+
+func TestWarnMissingExcludeContainers(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	fleet := []model.Container{{Name: "app"}}
+	warnMissingExcludeContainers(fleet, map[string]struct{}{
+		"gone": {},
+		"app":  {},
+	}, log)
+	out := buf.String()
+	if !strings.Contains(out, "exclude_containers name not found") || !strings.Contains(out, "gone") {
+		t.Fatalf("expected WARN for gone, got: %s", out)
+	}
+	if strings.Count(out, "exclude_containers name not found") != 1 {
+		t.Fatalf("should WARN only for missing name, log: %s", out)
 	}
 }

@@ -115,8 +115,9 @@ notifiers:
 # Env: VERSENTRY_NTFY_URL, VERSENTRY_NTFY_TOPIC, VERSENTRY_NTFY_TOKEN, VERSENTRY_NTFY_PROXY
 
 # --- Rules (optional) ---
-# Per-image include filters and/or track: digest. Per-container: versentry.include / versentry.track.
-# Opt-out: versentry.watch=false. Config rule for an image overrides labels entirely — see docs/rules.md.
+# Image axis: per-repo include filters and/or track: digest.
+# Config rule for an image overrides versentry.include / versentry.track on all
+# containers of that image — see docs/rules.md and docs/configuration.md (axes).
 #
 # rules:
 #   - image: "postgres"
@@ -126,6 +127,14 @@ notifiers:
 #   - image: "valkey/valkey"
 #     track: digest
 # floating tag rebuilds (e.g. 9-alpine), not semver "newer"
+
+# --- Exclude containers (optional) ---
+# Exact Docker names (docker ps) to skip. Complements label versentry.watch=false
+# (either source excludes; config cannot force-include against the label).
+#
+# exclude_containers:
+#   - chatwoot-notify
+#   - watch-test
 
 # --- Timeouts ---
 timeouts:

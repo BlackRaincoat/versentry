@@ -52,7 +52,7 @@ func TestListTagsTimeoutSkipsWhenParentAlive(t *testing.T) {
 			return nil, context.DeadlineExceeded
 		},
 	}
-	eng := NewEngine(&stubProvider{}, nil, registryTimeouts(), slog.Default(), nil)
+	eng := NewEngine(&stubProvider{}, nil, registryTimeouts(), slog.Default(), nil, nil)
 	eng.registries = append(eng.registries, reg)
 
 	c := model.Container{Name: "shared-postgres", ImageRef: "postgres:16"}
@@ -75,7 +75,7 @@ func TestListTagsNetworkErrorSkips(t *testing.T) {
 			return nil, &net.OpError{Op: "read", Err: errors.New("connection reset")}
 		},
 	}
-	eng := NewEngine(&stubProvider{}, nil, registryTimeouts(), slog.Default(), nil)
+	eng := NewEngine(&stubProvider{}, nil, registryTimeouts(), slog.Default(), nil, nil)
 	eng.registries = append(eng.registries, reg)
 
 	result, err := eng.checkContainer(
@@ -99,7 +99,7 @@ func TestListTagsParentCancelPropagates(t *testing.T) {
 			return nil, ctx.Err()
 		},
 	}
-	eng := NewEngine(&stubProvider{}, nil, registryTimeouts(), slog.Default(), nil)
+	eng := NewEngine(&stubProvider{}, nil, registryTimeouts(), slog.Default(), nil, nil)
 	eng.registries = append(eng.registries, reg)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -127,6 +127,7 @@ func TestTagDigestTimeoutSkips(t *testing.T) {
 		nil,
 		registryTimeouts(),
 		slog.Default(),
+		nil,
 		nil,
 	)
 	eng.registries = append(eng.registries, reg)
@@ -167,7 +168,7 @@ func TestRunOnceContinuesAfterListTagsTimeout(t *testing.T) {
 	}}
 	var logBuf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	eng := NewEngine(prov, nil, registryTimeouts(), log, nil)
+	eng := NewEngine(prov, nil, registryTimeouts(), log, nil, nil)
 	eng.registries = append(eng.registries, reg)
 
 	updates, _, _, err := eng.RunOnce(context.Background())
@@ -201,7 +202,7 @@ func TestRunOnceParentCancelStopsPass(t *testing.T) {
 			{Name: "never", ImageRef: "nginx:1.25.0"},
 		}, nil
 	}}
-	eng := NewEngine(prov, nil, registryTimeouts(), slog.Default(), nil)
+	eng := NewEngine(prov, nil, registryTimeouts(), slog.Default(), nil, nil)
 	eng.registries = append(eng.registries, reg)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -235,7 +236,7 @@ func TestRunOnceSafetyNetSkipsUnexpectedCheckError(t *testing.T) {
 		}, nil
 	}}
 
-	eng := NewEngine(prov, nil, registryTimeouts(), slog.Default(), nil)
+	eng := NewEngine(prov, nil, registryTimeouts(), slog.Default(), nil, nil)
 	eng.registries = append(eng.registries, reg)
 
 	_, _, _, err := eng.RunOnce(context.Background())

@@ -25,7 +25,7 @@ To build from source instead of pulling:
 docker compose up -d --build
 ```
 
-Versentry can live in the **same** `docker-compose.yml` as your other services, or in a separate stack (Portainer). Use `versentry.include` labels on other services for per-container tag rules — see [Rules](rules.md).
+Versentry can live in the **same** `docker-compose.yml` as your other services, or in a separate stack (Portainer). Prefer central opt-out via `exclude_containers` in Versentry config; use `versentry.include` / `versentry.watch` labels on other services when you need per-service overrides from that Compose file — see [Rules](rules.md) and [Container scope](configuration.md#container-scope-opt-out).
 
 ## Multi-arch build
 
@@ -45,7 +45,7 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 | `/data/state.json` | Notification state (path set by image env; internal, not user config) |
 | `/data/health` | Daemon liveness stamp (heartbeat + after each successful `run` pass) |
 
-Default image command: `versentry run -c /etc/versentry/config.yaml`.
+Default image command: `versentry run` (config default `/etc/versentry/config.yaml`).
 
 `restart: unless-stopped` is recommended.
 
@@ -122,7 +122,7 @@ The image defines `HEALTHCHECK` in the Dockerfile — you do not need a `healthc
 ```yaml
 # Optional override (defaults come from the image):
 healthcheck:
-  test: ["CMD", "/usr/local/bin/versentry", "health", "-c", "/etc/versentry/config.yaml"]
+  test: ["CMD", "/usr/local/bin/versentry", "health"]
   interval: 30s
   timeout: 10s
   retries: 3

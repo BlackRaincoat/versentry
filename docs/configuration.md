@@ -1,6 +1,6 @@
 # Configuration overview
 
-Versentry reads a YAML config file (default `config.yaml`, override with `-c`). The repository ships one annotated template: [`config.example.yaml`](../config.example.yaml).
+Versentry reads a YAML config file (default `/etc/versentry/config.yaml`, override with `-c`). The repository ships one annotated template: [`config.example.yaml`](../config.example.yaml).
 
 Back to [README](../README.md).
 
@@ -15,11 +15,11 @@ cp config.example.yaml config.yaml
 
 | Setup | Config path | Notes |
 |-------|-------------|--------|
-| **Docker Compose** (example stack) | `./config.yaml` → `/etc/versentry/config.yaml` | See [`docker-compose.example.yml`](../docker-compose.example.yml) |
-| **Docker / Portainer** (custom) | e.g. `/opt/versentry/config.yaml` on the host | Same idea: your file, bind-mounted read-only |
-| **Bare metal / `go run`** | `config.yaml` in the working directory | Or any path via `-c` |
+| **Docker Compose** (example stack) | `./config.yaml` → `/etc/versentry/config.yaml` | Default CLI path; no `-c` needed inside the container |
+| **Docker / Portainer** (custom) | e.g. `/opt/versentry/config.yaml` on the host | Same idea: your file, bind-mounted read-only at `/etc/versentry/config.yaml` |
+| **Bare metal / `go run`** | pass `-c ./config.yaml` (or another path) | Default `/etc/versentry/…` usually does not exist on the host |
 
-Secrets (Telegram token, webhook URLs, registry credentials) go in **environment variables** (`VERSENTRY_*`), not in the YAML you commit or share.
+Credentials and notifier endpoints are often injected via **`VERSENTRY_*` environment variables** so they stay out of committed YAML — see [Environment variables](#environment-variables). That is **injection**, not a general “env wins over config” rule for fleet policy.
 
 ## Top-level fields
 
@@ -28,7 +28,8 @@ Secrets (Telegram token, webhook URLs, registry credentials) go in **environment
 | `provider` | yes | — | Container source |
 | `notifiers` | yes (≥1) | — | Notification channels — see [Notifications](notifications.md) |
 | `registries` | no | auto public hosts | Extra / private OCI registries — see [Registries](registries.md) |
-| `rules` | no | — | Per-image `include` filters and optional `track: digest` — see [Rules](rules.md) |
+| `rules` | no | — | Per-image detection policy (`include` / `track`) — see [Rules](rules.md) |
+| `exclude_containers` | no | — | Exact container names to skip — see [Container scope](#container-scope-opt-out) |
 | `instance_name` | no | see below | Name shown in notification headers |
 | `timeouts.provider` | no | `10s` | Docker API timeout |
 | `timeouts.registry` | no | `30s` | Registry API timeout |
@@ -93,9 +94,28 @@ Links in alerts come from the image `org.opencontainers.image.source` label and 
 
 `instance_name` from the top-level config (or hostname / env) is injected into every notifier at startup.
 
-## Environment variables
+## Precedence: two different mechanisms
 
-YAML holds structure and non-secret options. **Env overrides YAML** for sensitive fields (typical in Docker). All Versentry-specific variables use the `VERSENTRY_` prefix to avoid clashes with `TZ`, `HTTP_PROXY`, and other services in the same compose stack.
+Do not read “env overrides YAML” as “environment is the source of truth for Versentry.” Two independent rules:
+
+### 1. Fleet policy (config ↔ labels)
+
+Source of truth for **what to watch and how to detect updates** is the YAML config, with labels as an escape hatch:
+
+| Concern | Precedence |
+|---------|------------|
+| Tag filters / `track` | config `rules[]` **wins over** `versentry.include` / `versentry.track` (whole rule; see [Rules](rules.md)) |
+| Opt-out | `exclude_containers` **OR** `versentry.watch=false` (both only exclude) |
+
+`VERSENTRY_*` does **not** participate here. Scheduling (`interval` / `schedule` / `timezone`), `rules`, `exclude_containers`, `timeouts`, notifier `mode` / templates, and similar policy knobs live in the config file only.
+
+### 2. Injection: secrets and deploy wiring (`VERSENTRY_*` → YAML)
+
+Non-empty `VERSENTRY_*` variables override the matching YAML fields in the table below (credentials, notifier endpoints/proxies, and a few deploy paths). They do **not** override scheduling, rules, exclude lists, or timeouts — those stay in the config file.
+
+Unset or empty env leaves the YAML value as-is. All Versentry-specific variables use the `VERSENTRY_` prefix to avoid clashes with `TZ`, `HTTP_PROXY`, and other services in the same compose stack.
+
+#### Credentials and endpoints
 
 | Variable | Overrides |
 |----------|-----------|
@@ -116,14 +136,19 @@ YAML holds structure and non-secret options. **Env overrides YAML** for sensitiv
 | `VERSENTRY_REGISTRY_USERNAME` | `username` on every configured `oci` registry |
 | `VERSENTRY_REGISTRY_TOKEN` | `token` on every configured `oci` registry |
 | `VERSENTRY_REGISTRY_PROXY` | `registry_proxy` (HTTP or `socks5://` for all registries) |
+
+#### Deploy overrides (not secrets)
+
+| Variable | Overrides |
+|----------|-----------|
 | `VERSENTRY_INSTANCE_NAME` | top-level `instance_name` |
 | `VERSENTRY_STATE_FILE` | top-level `state_file` (Docker image default: `/data/state.json`) |
 
-**Override rule (`VERSENTRY_*` only):** when a `VERSENTRY_*` variable is set and non-empty, it replaces the YAML value. Unset env leaves YAML as-is.
+These exist so Compose/image layout can set hostname display and the state path without editing policy YAML. Prefer env for tokens and webhook URLs you would not commit; `instance_name` / `state_file` may live in YAML or env equally.
 
 `TZ` is **not** a `VERSENTRY_*` override — see [TZ vs timezone](#tz-vs-timezone).
 
-**Instance name in Docker:** `os.Hostname()` inside a container is often the container id (e.g. `8145fc52b5fd`). Set `VERSENTRY_INSTANCE_NAME`, `instance_name` in YAML (overridden by env), or bind-mount the host hostname:
+**Instance name in Docker:** `os.Hostname()` inside a container is often the container id (e.g. `8145fc52b5fd`). Set `VERSENTRY_INSTANCE_NAME`, `instance_name` in YAML (overridden by env when set), or bind-mount the host hostname:
 
 ```yaml
 volumes:
@@ -136,23 +161,62 @@ volumes:
 
 **Where it appears:** **simple** mode uses the same layout as digest — instance on its own line (`📦 prod-docker-01`), then the container update on the next line(s). **Digest** with multiple updates keeps one instance header for the whole batch (`📦 prod-docker-01 — N updates`). Registry host (`index.docker.io`, …) is a separate field and is not in default Telegram/Discord templates.
 
+## Addressing axes (image vs container)
+
+Versentry has **two independent addressing axes** in config:
+
+| Axis | Config | Addresses | Purpose |
+|------|--------|-----------|---------|
+| **Image** | `rules[]` | repository path (`postgres`, `chatwoot/chatwoot`, …) | Detection: which tags / digest vs semver |
+| **Container** | `exclude_containers` | exact Docker container name (as in `docker ps`) | Opt-out: do not monitor that container |
+
+Labels (`versentry.*`) remain available as a per-container escape hatch. Detection and opt-out precedence are under [Fleet policy](#1-fleet-policy-config--labels) — env injection does not apply there.
+
+**Known asymmetry (detection):** a config `rules[]` entry for an image applies to **every** running container of that image and **ignores** `versentry.include` / `versentry.track` on those containers. You cannot give two `postgres` containers different include/track via labels once an image rule exists. Exclude **one** of those containers with `exclude_containers` (or `versentry.watch=false`). Per-container include/track in config is not implemented (YAGNI).
+
 ## Container scope (opt-out)
 
-By default **all running containers** are checked. Set label `versentry.watch=false` to exclude a container (`wud.watch` → `versentry.watch` when migrating).
+By default **all running containers** are checked. Opt out by name in config and/or with the label `versentry.watch=false`. Both sources only **exclude**; there is no config switch to force-monitor a labeled container.
+
+### Config `exclude_containers`
+
+```yaml
+exclude_containers:
+  - chatwoot-notify
+  - watch-test
+```
+
+- Exact match of the Docker container name (Compose service name / `docker ps` NAME).
+- Duplicate names in the list are harmless (deduped); Versentry may log **WARN**.
+- Empty entries → **config error**.
+- Name not among **running** containers → **WARN** each pass (container may be stopped); not a fatal error.
+
+### Label `versentry.watch`
+
+Works independently of `exclude_containers` (WUD migration: `wud.watch` → `versentry.watch`; opt-out from an app Compose file without editing Versentry config).
 
 | Label | Behavior |
 |-------|----------|
-| absent | monitored |
-| `versentry.watch=true` (or `1`, `t`, …) | monitored |
+| absent | monitored (unless name is in `exclude_containers`) |
+| `versentry.watch=true` (or `1`, `t`, …) | monitored (unless name is in `exclude_containers`) |
 | `versentry.watch=false` (or `0`, `f`, …) | excluded |
 
-Invalid values (`yes`, `on`, …) log **WARN** and are treated as absent (monitored).
+Invalid values (`yes`, `on`, …) log **WARN** and are treated as absent (monitored), unless the name is also in `exclude_containers`.
+
+### Combined rule
+
+A container is **excluded** if it is listed in `exclude_containers` **or** has `versentry.watch=false`. Otherwise it is monitored.
 
 Excluded containers do not appear in check results (not counted as skipped). Summary logs include `excluded=N`.
 
-**State / re-enable:** excluded containers are not part of the active fleet for notification state. Their container state key is pruned on the next pass. If you remove the label or set `versentry.watch=true` again, Versentry may **notify again** for updates that were never applied while the container was excluded.
+**State / re-enable:** excluded containers are not part of the active fleet for notification state. Their container state key is pruned on the next pass. If you remove the name from `exclude_containers` and/or clear the label, Versentry may **notify again** for updates that were never applied while the container was excluded.
 
 ```yaml
+# Config (preferred for per-host policy)
+exclude_containers:
+  - chatwoot-sidekiq
+
+# Or label on the service (when you cannot / prefer not to touch Versentry config)
 services:
   chatwoot-sidekiq:
     image: chatwoot/chatwoot:latest
@@ -208,7 +272,7 @@ Invalid cron → fail at startup.
 
 ### TZ vs timezone
 
-Versentry uses **two different timezone knobs**. They are not duplicates and do not follow the `VERSENTRY_*` env-overrides-YAML rule.
+Versentry uses **two different timezone knobs**. They are not duplicates and are separate from both fleet-policy precedence and `VERSENTRY_*` injection (see [Precedence](#precedence-two-different-mechanisms)).
 
 | | `TZ` (environment) | `timezone` (YAML config) |
 |--|-------------------|--------------------------|
@@ -253,7 +317,7 @@ A notifier failure (e.g. bad Telegram token) logs **ERROR** but **does not stop*
 
 ## How checks work
 
-1. List running containers (Docker socket); skip containers with `versentry.watch=false`.
+1. List running containers (Docker socket); skip `exclude_containers` names and `versentry.watch=false` (OR).
 2. Parse image ref → registry host + repo + tag.
 3. If rule/label sets `track: digest` → compare local vs remote digest for the current tag (see [Rules](rules.md#track-digest)).
 4. Else if **semver tag:** list tags → apply `include` filter if any → newest same-major tag → notify if newer.

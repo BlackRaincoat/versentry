@@ -14,7 +14,6 @@ import (
 	"github.com/BlackRaincoat/versentry/internal/core"
 	"github.com/BlackRaincoat/versentry/internal/health"
 	"github.com/BlackRaincoat/versentry/internal/logging"
-	"github.com/BlackRaincoat/versentry/internal/version"
 	_ "github.com/BlackRaincoat/versentry/internal/notifier/discord"
 	_ "github.com/BlackRaincoat/versentry/internal/notifier/gotify"
 	_ "github.com/BlackRaincoat/versentry/internal/notifier/ntfy"
@@ -23,8 +22,12 @@ import (
 	_ "github.com/BlackRaincoat/versentry/internal/notifier/webhook"
 	_ "github.com/BlackRaincoat/versentry/internal/provider/docker"
 	_ "github.com/BlackRaincoat/versentry/internal/registry/oci"
+	"github.com/BlackRaincoat/versentry/internal/version"
 	"github.com/spf13/cobra"
 )
+
+// DefaultConfigPath is the -c/--config default (image mount point).
+const DefaultConfigPath = "/etc/versentry/config.yaml"
 
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
@@ -42,7 +45,7 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage: true, // runtime errors should not dump flag help
 	}
 
-	root.PersistentFlags().StringVarP(&configPath, "config", "c", "config.yaml", "path to config file")
+	root.PersistentFlags().StringVarP(&configPath, "config", "c", DefaultConfigPath, "path to config file")
 	root.PersistentFlags().StringVar(&logLevel, "log-level", "", "log level: debug, info, warn, error (overrides config)")
 
 	root.AddCommand(newCheckCmd(&configPath, &logLevel))

@@ -71,6 +71,7 @@ func TestWriteLinksTable(t *testing.T) {
 		config.Timeouts{},
 		slog.Default(),
 		rules,
+		nil,
 	)
 
 	var buf bytes.Buffer
@@ -101,6 +102,7 @@ func TestLinkRowNoURL(t *testing.T) {
 		nil,
 		config.Timeouts{},
 		slog.Default(),
+		nil,
 		nil,
 	)
 	row := linkRowFor(eng, model.Container{

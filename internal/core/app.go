@@ -136,7 +136,15 @@ func NewApp(cfg *config.Config, log *slog.Logger) (*App, error) {
 	// Config wins over container labels (variant A).
 	rules := NewChainRuleResolver(configRules, NewLabelRuleResolver(log))
 
-	engine := NewEngine(prov, regs, cfg.Timeouts, log, rules)
+	exclude, dups, err := config.ExcludeContainerSet(cfg.ExcludeContainers)
+	if err != nil {
+		return nil, fmt.Errorf("exclude_containers: %w", err)
+	}
+	for _, name := range dups {
+		log.Warn("duplicate name in exclude_containers", "name", name)
+	}
+
+	engine := NewEngine(prov, regs, cfg.Timeouts, log, rules, exclude)
 
 	return &App{
 		engine:    engine,

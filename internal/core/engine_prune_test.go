@@ -38,6 +38,7 @@ func TestRunOnceEmptyFleetSkipsPrune(t *testing.T) {
 		config.Timeouts{},
 		slog.Default(),
 		nil,
+		nil,
 	)
 
 	_, _, canPrune, err := eng.RunOnce(context.Background())
@@ -58,6 +59,7 @@ func TestRunOnceListErrorReturnsNoPrune(t *testing.T) {
 		nil,
 		config.Timeouts{},
 		slog.Default(),
+		nil,
 		nil,
 	)
 
@@ -81,6 +83,7 @@ func TestRunOnceActiveKeysPerContainer(t *testing.T) {
 		nil,
 		config.Timeouts{},
 		slog.Default(),
+		nil,
 		nil,
 	)
 
@@ -117,6 +120,7 @@ func TestRunOnceSameImageDifferentLinesSeparateKeys(t *testing.T) {
 		config.Timeouts{},
 		slog.Default(),
 		nil,
+		nil,
 	)
 
 	_, activeKeys, canPrune, err := eng.RunOnce(context.Background())
@@ -148,6 +152,7 @@ func TestRunOnceOneOfTwoSameImageStillActive(t *testing.T) {
 		config.Timeouts{},
 		slog.Default(),
 		nil,
+		nil,
 	)
 
 	_, activeKeys, canPrune, err := eng.RunOnce(context.Background())
@@ -174,6 +179,7 @@ func TestRunOnceExcludedNotInActiveKeys(t *testing.T) {
 		config.Timeouts{},
 		slog.Default(),
 		nil,
+		nil,
 	)
 
 	_, activeKeys, canPrune, err := eng.RunOnce(context.Background())
@@ -199,6 +205,7 @@ func TestRunOnceTagChangeKeepsContainerKey(t *testing.T) {
 		config.Timeouts{},
 		slog.Default(),
 		nil,
+		nil,
 	)
 
 	_, activeKeys, _, err := eng.RunOnce(context.Background())
@@ -220,6 +227,7 @@ func TestRunOnceEmptyNameFallsBackToShortID(t *testing.T) {
 		nil,
 		config.Timeouts{},
 		slog.Default(),
+		nil,
 		nil,
 	)
 

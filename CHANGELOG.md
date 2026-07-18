@@ -4,6 +4,16 @@ All notable changes to Versentry are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follows [SemVer](https://semver.org/).
 
+## [1.2.3] - 2026-07-19
+
+### Added
+
+- Config `exclude_containers` — flat list of exact Docker container names to skip. Complements label `versentry.watch=false` (either source excludes; no force-include). Missing names among the running fleet log WARN; duplicate list entries are deduped (optional WARN). See docs: image axis (`rules[]`) vs container opt-out (`exclude_containers`).
+
+### Changed
+
+- Default `-c` / `--config` path is `/etc/versentry/config.yaml` (image mount point) instead of `config.yaml` in the current working directory. `docker exec … versentry check` works without `-c`. Local runs from a repo checkout need an explicit path (e.g. `-c ./config.yaml`).
+
 ## [1.2.2] - 2026-07-18
 
 ### Security
@@ -99,6 +109,7 @@ First public release.
 - Multi-arch Docker image (amd64, arm64)
 - `VERSENTRY_*` environment variable overrides for secrets and paths
 
+[1.2.3]: https://github.com/BlackRaincoat/versentry/releases/tag/1.2.3
 [1.2.2]: https://github.com/BlackRaincoat/versentry/releases/tag/1.2.2
 [1.2.1]: https://github.com/BlackRaincoat/versentry/releases/tag/1.2.1
 [1.2.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.2.0

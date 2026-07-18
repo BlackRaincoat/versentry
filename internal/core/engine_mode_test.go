@@ -64,6 +64,7 @@ func TestModeDigestPath(t *testing.T) {
 		config.Timeouts{},
 		slog.Default(),
 		rules,
+		nil,
 	)
 	eng.registries = append(eng.registries, reg)
 
@@ -96,6 +97,7 @@ func TestModeAbsentKeepsSemverForAlpineTag(t *testing.T) {
 		nil,
 		config.Timeouts{},
 		slog.Default(),
+		nil,
 		nil,
 	)
 	eng.registries = append(eng.registries, reg)
@@ -137,6 +139,7 @@ func TestModeDigestWithIncludeWarnsAndIgnoresInclude(t *testing.T) {
 		config.Timeouts{},
 		log,
 		rules,
+		nil,
 	)
 	eng.registries = append(eng.registries, reg)
 
@@ -167,6 +170,7 @@ func TestLabelTrackDigestForcesDigest(t *testing.T) {
 		config.Timeouts{},
 		slog.Default(),
 		NewLabelRuleResolver(slog.Default()),
+		nil,
 	)
 	eng.registries = append(eng.registries, reg)
 
@@ -198,6 +202,7 @@ func TestLabelModeDigestAliasForcesDigest(t *testing.T) {
 		config.Timeouts{},
 		slog.Default(),
 		NewLabelRuleResolver(slog.Default()),
+		nil,
 	)
 	eng.registries = append(eng.registries, reg)
 

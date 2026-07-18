@@ -17,7 +17,7 @@ services:
     container_name: versentry
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "/usr/local/bin/versentry", "health", "-c", "/etc/versentry/config.yaml"]
+      test: ["CMD", "/usr/local/bin/versentry", "health"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -36,7 +36,8 @@ func (e *Engine) WriteLinks(ctx context.Context, w io.Writer) error {
 		return fmt.Errorf("list containers: %w", err)
 	}
 
-	monitored, excluded := filterByWatch(containers, e.log)
+	warnMissingExcludeContainers(containers, e.excludeContainers, e.log)
+	monitored, excluded := filterByWatch(containers, e.excludeContainers, e.log)
 	e.log.Info("listed running containers",
 		"count", len(containers),
 		"monitored", len(monitored),
