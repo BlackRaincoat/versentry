@@ -4,6 +4,18 @@ All notable changes to Versentry are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follows [SemVer](https://semver.org/).
 
+## [1.2.2] - 2026-07-18
+
+### Security
+
+- Bump transitive `github.com/docker/cli` `v27.5.0` → `v29.6.2` (via `go-containerregistry` → `cli/config` for registry credentials). Clears Docker Scout’s CVE-2025-15558 finding. That advisory is **Windows-only** (unprivileged write to `C:\ProgramData\Docker\cli-plugins`); Versentry never invokes Docker CLI plugins and runs as a Linux image — false positive by reachability; bump is scanner hygiene only.
+- Final image stage is now `scratch` (no Alpine/BusyBox). Removes OS-layer scanner surface (e.g. CVE-2025-60876 BusyBox wget and similar). Runtime needs: static binary, copied CA bundle, embedded `time/tzdata`.
+
+### Changed
+
+- Embed IANA timezone database via `import _ "time/tzdata"` instead of the Alpine `tzdata` package. Cron `timezone:` / `TZ` (e.g. `Europe/Paris`) keep working without zoneinfo files. **Trade-off:** zoneinfo freezes at the Go toolchain version used to build; updates only on rebuild (unlike `apk upgrade tzdata`).
+- Docker HEALTHCHECK calls `/usr/local/bin/versentry health` directly (no `/usr/local/bin/health` shell wrapper). Compose overrides should use the same exec form.
+
 ## [1.2.1] - 2026-07-17
 
 ### Security
@@ -87,6 +99,7 @@ First public release.
 - Multi-arch Docker image (amd64, arm64)
 - `VERSENTRY_*` environment variable overrides for secrets and paths
 
+[1.2.2]: https://github.com/BlackRaincoat/versentry/releases/tag/1.2.2
 [1.2.1]: https://github.com/BlackRaincoat/versentry/releases/tag/1.2.1
 [1.2.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.2.0
 [1.1.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.1.0

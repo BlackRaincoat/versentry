@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	_ "time/tzdata" // embedded IANA zones for scratch image (no apk tzdata)
 
 	"github.com/BlackRaincoat/versentry/internal/config"
 	"github.com/BlackRaincoat/versentry/internal/core"

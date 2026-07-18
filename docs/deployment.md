@@ -93,11 +93,11 @@ Versentry has two timezone settings — see [Configuration — TZ vs timezone](c
 | `TZ` | compose `environment` | Container-wide: **log timestamps**, process local time |
 | `timezone` | config YAML | **Cron only** (`schedule`); ignored when using `interval` |
 
-**Typical Docker setup:** always set `TZ` (e.g. `Europe/Moscow`). Add `timezone` in config only when you use `schedule`; use the same zone as `TZ` unless you have a reason not to.
+**Typical Docker setup:** always set `TZ` (e.g. `Europe/Paris`). Add `timezone` in config only when you use `schedule`; use the same zone as `TZ` unless you have a reason not to.
 
 ```yaml
 environment:
-  TZ: Europe/Moscow
+  TZ: Europe/Paris
 ```
 
 ## State volume
@@ -117,12 +117,12 @@ See [Configuration — notification state](configuration.md#notification-state-v
 
 Included in the image: verifies Docker socket reachability (`docker ping`, not a full container list) and a recent daemon liveness stamp (`/data/health` on the state volume). The stamp is refreshed on **startup**, on a **heartbeat** while `versentry run` is up (every 1–15 minutes), and after each successful scheduled pass.
 
-The image defines `HEALTHCHECK` in the Dockerfile — you do not need a `healthcheck:` block in compose unless you want to override timing. The probe is `/usr/local/bin/health` (a small wrapper around `versentry health`). **Docker runs HEALTHCHECK directly; it does not prepend `ENTRYPOINT`**, so the probe must be an executable path, not the `health` subcommand alone.
+The image defines `HEALTHCHECK` in the Dockerfile — you do not need a `healthcheck:` block in compose unless you want to override timing. The probe is `/usr/local/bin/versentry health` (full binary path). **Docker runs HEALTHCHECK directly; it does not prepend `ENTRYPOINT`**, so the probe must be an absolute executable path plus args, not the bare `health` subcommand.
 
 ```yaml
 # Optional override (defaults come from the image):
 healthcheck:
-  test: ["CMD", "/usr/local/bin/health", "-c", "/etc/versentry/config.yaml"]
+  test: ["CMD", "/usr/local/bin/versentry", "health", "-c", "/etc/versentry/config.yaml"]
   interval: 30s
   timeout: 10s
   retries: 3

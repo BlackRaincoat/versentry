@@ -219,16 +219,16 @@ Versentry uses **two different timezone knobs**. They are not duplicates and do 
 
 **Cron requires a timezone:** set `timezone` in config (e.g. `Europe/Paris`) **or** `TZ` in the environment. Startup fails if `schedule` is set and neither resolves to a valid IANA zone.
 
-**Docker recommendation:** set `TZ` in compose for readable logs. Add `timezone` in config when you use `schedule` and want the cron zone documented in the config file (or when `TZ` is unset). If both are set, cron follows `timezone`; logs still follow `TZ` — keep them aligned (e.g. both `Europe/Moscow`) to avoid confusion.
+**Docker recommendation:** set `TZ` in compose for readable logs. Add `timezone` in config when you use `schedule` and want the cron zone documented in the config file (or when `TZ` is unset). If both are set, cron follows `timezone`; logs still follow `TZ` — keep them aligned (e.g. both `Europe/Paris`) to avoid confusion.
 
 ```yaml
 # compose.yml
 environment:
-  TZ: Europe/Moscow
+  TZ: Europe/Paris
 
 # config.yaml (only when using schedule)
 schedule: "0 12 * * *"
-timezone: Europe/Moscow
+timezone: Europe/Paris
 ```
 
 With **`interval` only** (no `schedule`), `timezone` in config is unused; `TZ` still controls log timestamps.
