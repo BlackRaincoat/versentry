@@ -183,7 +183,6 @@ By default **all running containers** are checked. Opt out by name in config and
 ```yaml
 exclude_containers:
   - chatwoot-notify
-  - watch-test
 ```
 
 - Exact match of the Docker container name (Compose service name / `docker ps` NAME).

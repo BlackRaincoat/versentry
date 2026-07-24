@@ -38,7 +38,7 @@ func TestTextHandlerUnquotedValues(t *testing.T) {
 	record := slog.NewRecord(time.Now(), slog.LevelWarn, "container skipped", 0)
 	record.AddAttrs(
 		slog.String("container", "dashy"),
-		slog.String("reason", "no registry configured for host \"registry.example.com\""),
+		slog.String("reason", "no registry configured for host registry.example.com"),
 	)
 
 	if err := h.Handle(t.Context(), record); err != nil {
@@ -46,14 +46,14 @@ func TestTextHandlerUnquotedValues(t *testing.T) {
 	}
 
 	got := strings.TrimSpace(buf.String())
-	if !strings.Contains(got, " container=dashy ") && !strings.HasSuffix(got, " container=dashy reason=") {
-		// container=dashy should be unquoted
-		if strings.Contains(got, `container="dashy"`) {
-			t.Fatalf("container should be unquoted: %q", got)
-		}
+	if strings.Contains(got, `container="dashy"`) {
+		t.Fatalf("container should be unquoted: %q", got)
 	}
-	if !strings.Contains(got, `reason="no registry configured for host \"registry.example.com\""`) &&
-		!strings.Contains(got, `reason="no registry configured`) {
-		t.Fatalf("reason with spaces should be quoted: %q", got)
+	wantReason := `reason="no registry configured for host registry.example.com"`
+	if !strings.Contains(got, wantReason) {
+		t.Fatalf("got %q, want substring %q", got, wantReason)
+	}
+	if strings.Contains(got, `\"`) {
+		t.Fatalf("reason should not escape quotes: %q", got)
 	}
 }

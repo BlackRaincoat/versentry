@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BlackRaincoat/versentry/internal/config"
@@ -50,6 +51,7 @@ type Engine struct {
 	ruleSelector      TagSelector
 	rules             RuleResolver
 	excludeContainers map[string]struct{} // exclude_containers set; absent → label only
+	warnOnceKeys      sync.Map            // one-time diagnostic WARN keys for this process
 }
 
 // NewEngine wires the core check loop.
@@ -185,7 +187,8 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 		return e.skipped(base, err.Error()), nil
 	}
 
-	mode, rule := resolveTrackingMode(e.rules, e.log, parsed.Host, parsed.Repo, parsed.Tag, c.Name, c.Labels)
+	mode, rule, digestCause := resolveTrackingMode(e.rules, parsed.Host, parsed.Repo, parsed.Tag, c.Name, c.Labels)
+	e.logTrackingDiagnostics(c.Name, parsed.Repo, parsed.Tag, mode, digestCause, rule)
 	if mode == imageweb.ModeDigest {
 		return e.checkDigest(ctx, c, parsed, reg, pass)
 	}
@@ -197,7 +200,6 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 		return e.mapRegistryRequestError(ctx, base, "list tags", parsed.Repo, err)
 	}
 
-	selector := e.tagSelector
 	if rule != nil && rule.Include != nil {
 		if !rule.Include.MatchString(parsed.Tag) {
 			return e.skipped(base, "current tag does not match include rule"), nil
@@ -206,6 +208,14 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 		if len(tags) == 0 {
 			return e.skipped(base, "no tags match include rule"), nil
 		}
+	}
+
+	if mode == imageweb.ModeNumeric {
+		return e.checkNumeric(base, c, parsed, tags)
+	}
+
+	selector := e.tagSelector
+	if rule != nil && rule.Include != nil {
 		selector = e.ruleSelector
 	}
 
@@ -239,6 +249,47 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 		}, nil
 	}
 
+	return containerResult{
+		Container:  c,
+		Status:     statusUpToDate,
+		CurrentTag: parsed.Tag,
+		LatestTag:  latestTag,
+		ImageRef:   c.ImageRef,
+	}, nil
+}
+
+func (e *Engine) checkNumeric(
+	base containerResult,
+	c model.Container,
+	parsed imageref.Parsed,
+	tags []string,
+) (containerResult, error) {
+	current, ok := parseNumericVersion(parsed.Tag)
+	if !ok {
+		return e.skipped(base, "parse numeric tag failed"), nil
+	}
+	latestTag, latest, ok := selectNumericTag(current, tags)
+	if !ok {
+		return e.skipped(base, "no matching numeric tags in registry"), nil
+	}
+	if compareNumeric(latest, current) > 0 {
+		update := model.UpdateAvailable{
+			Container:  c,
+			Host:       parsed.Host,
+			Repo:       parsed.Repo,
+			CurrentTag: parsed.Tag,
+			LatestTag:  latestTag,
+			CheckedAt:  time.Now().UTC(),
+		}
+		return containerResult{
+			Container:  c,
+			Status:     statusUpdate,
+			CurrentTag: parsed.Tag,
+			LatestTag:  latestTag,
+			ImageRef:   c.ImageRef,
+			Update:     &update,
+		}, nil
+	}
 	return containerResult{
 		Container:  c,
 		Status:     statusUpToDate,
@@ -401,7 +452,7 @@ func (e *Engine) registryForHost(host string) (registry.Registry, error) {
 			return reg, nil
 		}
 	}
-	return nil, fmt.Errorf("no registry configured for host %q", host)
+	return nil, fmt.Errorf("no registry configured for host %s", host)
 }
 
 func normalizeDigest(d string) string {

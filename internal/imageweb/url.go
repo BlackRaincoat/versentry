@@ -9,21 +9,22 @@ import (
 const (
 	labelSource = "org.opencontainers.image.source"
 
-	// ModeSemver and ModeDigest match format.TrackingMode values.
-	ModeSemver = "semver"
-	ModeDigest = "digest"
+	// ModeSemver, ModeNumeric, and ModeDigest match format / links MODE values.
+	ModeSemver  = "semver"
+	ModeNumeric = "numeric" // strict dotted numeric (e.g. v0.63.1.3); URL treatment matches semver
+	ModeDigest  = "digest"
 )
 
 // URL builds a human-facing web link for an image update.
 // Prefer reliable pages (release lists, registry tag views) over guessed per-tag
 // GitHub release URLs that often 404. Returns "" when no reliable URL exists.
 //
-// mode is "semver" or "digest" (see ModeSemver / ModeDigest).
-// tag is LatestTag for semver updates and CurrentTag for digest updates.
+// mode is "semver", "numeric", or "digest".
+// tag is LatestTag for semver/numeric updates and CurrentTag for digest updates.
 func URL(host, repo, tag string, labels map[string]string, mode string) string {
 	source := parseSource(labels)
 
-	if mode == ModeSemver {
+	if mode == ModeSemver || mode == ModeNumeric {
 		if source != nil && isGitHub(source.host) {
 			return source.repoURL + "/releases"
 		}

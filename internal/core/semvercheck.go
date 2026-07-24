@@ -72,9 +72,8 @@ func parseTagForm(raw string) tagForm {
 	if err != nil {
 		return tagForm{}
 	}
-	// Masterminds accepts an optional lowercase "v" prefix only.
 	s := strings.TrimSpace(raw)
-	hasV := len(s) > 0 && s[0] == 'v'
+	hasV := hasVPrefix(s)
 	if hasV {
 		s = s[1:]
 	}
@@ -95,6 +94,22 @@ func parseTagForm(raw string) tagForm {
 	}
 }
 
+// hasVPrefix reports a leading lowercase "v" (Masterminds / dotted numeric convention).
+func hasVPrefix(raw string) bool {
+	s := strings.TrimSpace(raw)
+	return len(s) > 0 && s[0] == 'v'
+}
+
+// preferMatchingVPrefix is the first tie-break shared by semver and dotted numeric:
+// prefer the candidate whose v-prefix presence matches the current tag.
+func preferMatchingVPrefix(current, a, b string) (decisive bool, preferA bool) {
+	cur, fa, fb := hasVPrefix(current), hasVPrefix(a), hasVPrefix(b)
+	if (fa == cur) != (fb == cur) {
+		return true, fa == cur
+	}
+	return false, false
+}
+
 // preferEqualSemverTag reports whether candidate a is a better pick than b when
 // both parse to the same semver version.
 //
@@ -108,13 +123,14 @@ func parseTagForm(raw string) tagForm {
 // container uses v*. After form, prefer a more specific tag, then longer, then
 // lexicographically smaller — all independent of ListTags order.
 func preferEqualSemverTag(current, a, b string) bool {
+	if decisive, preferA := preferMatchingVPrefix(current, a, b); decisive {
+		return preferA
+	}
+
 	cur := parseTagForm(current)
 	fa := parseTagForm(a)
 	fb := parseTagForm(b)
 
-	if (fa.hasV == cur.hasV) != (fb.hasV == cur.hasV) {
-		return fa.hasV == cur.hasV
-	}
 	if (fa.components == cur.components) != (fb.components == cur.components) {
 		return fa.components == cur.components
 	}

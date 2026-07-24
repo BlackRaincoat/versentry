@@ -4,6 +4,23 @@ All notable changes to Versentry are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follows [SemVer](https://semver.org/).
 
+## [1.3.0] - 2026-07-24
+
+### Added
+
+- Strict dotted **numeric** tags (e.g. `v0.63.1.3`) that Masterminds semver rejects are compared segment-by-segment (`^v?\d+(\.\d+)+$` only). Same-major filter and `include` work like the semver path. `versentry links` MODE shows `numeric`.
+- Diagnostic WARN (once per process) when a tag is not semver/numeric and Versentry falls back to digest tracking — newer version tags will not be detected (`tag=…`, `image=…`).
+- Diagnostic WARN (once per process) when an `include` rule is ignored because the container is tracked by digest (`digest=rule` for explicit `track: digest`, or `digest=auto` for non-version tags).
+- `versentry links` MODE column distinguishes `digest(rule)` (explicit `track: digest`) from `digest(auto)` (neither semver nor strict numeric); `semver` / `numeric` unchanged for their paths.
+
+### Changed
+
+- Digest-auto diagnostic WARN is not emitted for the exact tag `latest` (Docker’s well-known floating default). `versentry links` still shows `digest(auto)`.
+
+### Fixed
+
+- Skip reason `no registry configured for host …` no longer wraps the hostname in Go `%q` quotes, so compact logs no longer show `host \"git.example.com\"` escaping inside `reason="…"`.
+
 ## [1.2.3] - 2026-07-19
 
 ### Added
@@ -109,6 +126,7 @@ First public release.
 - Multi-arch Docker image (amd64, arm64)
 - `VERSENTRY_*` environment variable overrides for secrets and paths
 
+[1.3.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.3.0
 [1.2.3]: https://github.com/BlackRaincoat/versentry/releases/tag/1.2.3
 [1.2.2]: https://github.com/BlackRaincoat/versentry/releases/tag/1.2.2
 [1.2.1]: https://github.com/BlackRaincoat/versentry/releases/tag/1.2.1

@@ -41,7 +41,19 @@ Useful to verify Hub / GitHub / GHCR links after changing `track: digest` or rul
 docker exec versentry versentry links
 ```
 
-Columns: `CONTAINER`, `IMAGE:TAG`, `MODE` (`semver` / `digest` / `error`), `URL` (`(no url)` when empty). Table on stdout; logs on stderr.
+Columns: `CONTAINER`, `IMAGE:TAG`, `MODE`, `URL` (`(no url)` when empty). Table on stdout; logs on stderr.
+
+`MODE` values:
+
+| Value | Meaning |
+|-------|---------|
+| `semver` | Tag parses as Masterminds semver; version comparison |
+| `numeric` | Strict dotted numeric only (`v0.63.1.3`); segment comparison when semver rejects the tag |
+| `digest(rule)` | Explicit `track: digest` (config or label) |
+| `digest(auto)` | Neither semver nor strict numeric — digest fallback (rebuild of the **same** tag only) |
+| `error` | Unusable ref (parse failure, digest-only image) |
+
+One-time WARN on check/run/links when `digest(auto)` is used (except tag `latest`), and when an `include` rule is ignored under digest tracking — see [Rules](rules.md#digest-diagnostics).
 
 ## `check` vs `run`
 

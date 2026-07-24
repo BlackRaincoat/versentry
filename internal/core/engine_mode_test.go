@@ -154,8 +154,11 @@ func TestModeDigestWithIncludeWarnsAndIgnoresInclude(t *testing.T) {
 	if reg.listCalls != 0 {
 		t.Fatal("include must not trigger ListTags under mode=digest")
 	}
-	if !strings.Contains(warnBuf.String(), "include ignored: track=digest") {
+	if !strings.Contains(warnBuf.String(), "include rule ignored") {
 		t.Fatalf("expected include-ignored WARN, got %q", warnBuf.String())
+	}
+	if !strings.Contains(warnBuf.String(), "digest=rule") {
+		t.Fatalf("expected digest=rule attr, got %q", warnBuf.String())
 	}
 }
 

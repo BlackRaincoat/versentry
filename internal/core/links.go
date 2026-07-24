@@ -6,8 +6,8 @@ import (
 	"io"
 	"text/tabwriter"
 
-	"github.com/BlackRaincoat/versentry/internal/imageweb"
 	"github.com/BlackRaincoat/versentry/internal/imageref"
+	"github.com/BlackRaincoat/versentry/internal/imageweb"
 	"github.com/BlackRaincoat/versentry/internal/model"
 )
 
@@ -83,7 +83,8 @@ func linkRowFor(e *Engine, c model.Container) LinkRow {
 		}
 	}
 
-	mode, _ := resolveTrackingMode(e.rules, e.log, parsed.Host, parsed.Repo, parsed.Tag, name, c.Labels)
+	mode, rule, digestCause := resolveTrackingMode(e.rules, parsed.Host, parsed.Repo, parsed.Tag, name, c.Labels)
+	e.logTrackingDiagnostics(name, parsed.Repo, parsed.Tag, mode, digestCause, rule)
 	link := imageweb.URL(parsed.Host, parsed.Repo, parsed.Tag, c.Labels, mode)
 	if link == "" {
 		link = "(no url)"
@@ -91,7 +92,7 @@ func linkRowFor(e *Engine, c model.Container) LinkRow {
 	return LinkRow{
 		Container: name,
 		ImageTag:  imageTag,
-		Mode:      mode,
+		Mode:      linksDisplayMode(mode, digestCause),
 		URL:       link,
 	}
 }

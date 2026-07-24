@@ -18,7 +18,13 @@ Back to [README](../README.md) · [Configuration overview](configuration.md)
 
 Invalid regex / unknown `track` in config → fail at startup. Invalid label values → WARN and ignore (that field; pass continues).
 
-Default detection (no `track`): non-semver tags (`latest`, `pg17-trixie`, …) use digest (local vs remote digest for the same tag). Semver-parsable tags use the semver path; `include` only applies there.
+Default detection (no `track`):
+
+1. Masterminds **semver** if the tag parses (including prerelease / suffixes like `17.10-alpine3.24`)
+2. Else **numeric** if the tag is strictly dotted digits (`^v?\d+(\.\d+)+$`, typically 4+ segments such as `v0.63.1.3`)
+3. Else **digest** (local vs remote digest for the **same** tag: `latest`, `pg17-trixie`, `9-alpine`, …)
+
+`include` applies on the semver and numeric paths only. See [Digest diagnostics](#digest-diagnostics) and [Numeric tags](#numeric-tags).
 
 ```yaml
 rules:
@@ -59,7 +65,7 @@ Force **digest** detection for an image/container: compare local vs remote diges
 
 Sources: config `track: digest`, or label `versentry.track=digest`. Only value supported: `digest`.
 
-**With `include`:** if both are set on the same effective rule, `include` is ignored and Versentry logs **WARN** (`include applies only in semver mode`). Not a config error.
+**With `include`:** if both are set on the same effective rule, `include` is ignored and Versentry logs a **one-time WARN** (`include applies only in semver mode`). The same WARN fires when `include` is set but the running tag is not semver (digest fallback). Not a config error.
 
 A config rule may be `track`-only (no `include`):
 
@@ -68,6 +74,30 @@ rules:
   - image: "valkey/valkey"
     track: digest
 ```
+
+## Numeric tags
+
+When Masterminds semver rejects a tag but it matches `^v?\d+(\.\d+)+$` (optional `v`, then only digits and dots — no letters or `-rc` / `.4a` suffixes), Versentry compares versions **segment by segment**. Missing trailing segments count as `0` (so `1.2.3` is older than `1.2.3.4`). Same-major filtering uses the **first** segment (like semver major).
+
+**0.x product lines (e.g. Metabase):** major is always `0`, so same-major does **not** narrow the candidate set — every `0.*.*.*` tag competes. To stay on a patch line (e.g. only `0.63.1.*`), set an `include` regex. Behavior is intentional; document it so it is not a surprise.
+
+`versentry links` shows MODE `numeric` for this path. Notification URLs follow the semver-style link rules (release list / registry tag page).
+
+## Digest diagnostics
+
+Digest tracking of a floating tag only sees **rebuilds of that exact tag**, not “`pg17-trixie` rebuilt vs a new tag name”. Tags that look like versions but fail both semver and strict numeric still fall through here.
+
+Versentry surfaces the trap:
+
+| Signal | When |
+|--------|------|
+| One-time **WARN** | Tag is neither semver nor strict numeric → digest fallback — *newer version tags will not be detected* |
+| One-time **WARN** | `include` is set but the container is on digest (`digest=rule` or `digest=auto`) — rule is dead weight |
+| `versentry links` **MODE** | `digest(rule)` vs `digest(auto)` vs `semver` / `numeric` — see [Commands — links](commands.md#links) |
+
+**Exception:** tag `latest` (Docker’s default floating tag) still uses `digest(auto)` in `links`, but does **not** emit the digest-fallback WARN — that nature is expected, not a surprise. Other floating names (`stable`, `main`, `edge`, …) still WARN.
+
+WARN keys are remembered for the process lifetime (daemon restart clears them).
 
 ## Regex escaping (common footgun)
 

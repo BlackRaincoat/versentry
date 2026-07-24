@@ -134,7 +134,6 @@ notifiers:
 #
 # exclude_containers:
 #   - chatwoot-notify
-#   - watch-test
 
 # --- Timeouts ---
 timeouts:

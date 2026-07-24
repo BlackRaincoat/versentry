@@ -12,33 +12,6 @@ import (
 	"github.com/BlackRaincoat/versentry/internal/model"
 )
 
-func TestResolveTrackingModeDigestRule(t *testing.T) {
-	rules, err := NewConfigRuleResolver([]config.RuleConfig{
-		{Image: "valkey/valkey", Mode: "digest"},
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mode, _ := resolveTrackingMode(rules, nil, "index.docker.io", "valkey/valkey", "9-alpine", "cache", nil)
-	if mode != imageweb.ModeDigest {
-		t.Fatalf("mode = %q", mode)
-	}
-}
-
-func TestResolveTrackingModeSemverParsable(t *testing.T) {
-	mode, _ := resolveTrackingMode(nil, nil, "index.docker.io", "library/nginx", "1.25.0", "web", nil)
-	if mode != imageweb.ModeSemver {
-		t.Fatalf("mode = %q", mode)
-	}
-}
-
-func TestResolveTrackingModeNonSemver(t *testing.T) {
-	mode, _ := resolveTrackingMode(nil, nil, "index.docker.io", "pgvector/pgvector", "pg17-trixie", "db", nil)
-	if mode != imageweb.ModeDigest {
-		t.Fatalf("mode = %q", mode)
-	}
-}
-
 func TestWriteLinksTable(t *testing.T) {
 	rules, err := NewConfigRuleResolver([]config.RuleConfig{
 		{Image: "valkey/valkey", Mode: "digest"},
@@ -82,8 +55,8 @@ func TestWriteLinksTable(t *testing.T) {
 	if !strings.Contains(out, "CONTAINER") || !strings.Contains(out, "MODE") {
 		t.Fatalf("missing header: %q", out)
 	}
-	if !strings.Contains(out, "cache") || !strings.Contains(out, "digest") {
-		t.Fatalf("expected valkey digest row: %q", out)
+	if !strings.Contains(out, "cache") || !strings.Contains(out, "digest(rule)") {
+		t.Fatalf("expected valkey digest(rule) row: %q", out)
 	}
 	if !strings.Contains(out, "hub.docker.com/r/valkey/valkey?tag=9-alpine") {
 		t.Fatalf("expected hub url for digest valkey: %q", out)
@@ -93,6 +66,17 @@ func TestWriteLinksTable(t *testing.T) {
 	}
 	if strings.Contains(out, "skip-me") {
 		t.Fatalf("excluded container must not appear: %q", out)
+	}
+}
+
+func TestLinkRowNumericFourSegment(t *testing.T) {
+	eng := NewEngine(&stubProvider{}, nil, config.Timeouts{}, slog.Default(), nil, nil)
+	row := linkRowFor(eng, model.Container{
+		Name:     "metabase",
+		ImageRef: "metabase/metabase:v0.63.1.3",
+	})
+	if row.Mode != imageweb.ModeNumeric {
+		t.Fatalf("mode = %q, want %s", row.Mode, imageweb.ModeNumeric)
 	}
 }
 

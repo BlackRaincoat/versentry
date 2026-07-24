@@ -101,4 +101,3 @@ func TestFinishRunDeadlineExceededNotClean(t *testing.T) {
 		t.Fatalf("got %v, want DeadlineExceeded", err)
 	}
 }
-
