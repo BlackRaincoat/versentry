@@ -16,7 +16,10 @@ jobs:
           # Floating minor — same policy as Dockerfile ARG GO_VERSION=1.25
           # (latest 1.25.x patch). Do not use go-version-file: go.mod (that pins
           # the language minimum 1.25.0 and diverges from the image toolchain).
+          # check-latest: without it, a runner-preinstalled/cached 1.25.x can
+          # lag Hub; govulncheck then flags stdlib CVEs the image does not have.
           go-version: "1.25"
+          check-latest: true
           cache: true
 
       - name: Vet

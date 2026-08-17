@@ -4,6 +4,12 @@ All notable changes to Versentry are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- CI: `setup-go` `check-latest: true`; image builds `pull: true` so the floating Go 1.25 pin follows the current patch instead of a cached toolchain or a stale `golang:1.25-alpine` layer.
+
 ## [1.4.0] - 2026-08-17
 
 ### Added

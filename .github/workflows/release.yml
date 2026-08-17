@@ -55,6 +55,9 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          # Always pull golang:1.25-alpine so a cached Hub layer cannot pin an
+          # older 1.25.x than the floating ARG GO_VERSION=1.25 policy intends.
+          pull: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: |
