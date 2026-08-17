@@ -13,12 +13,21 @@ type Container struct {
 
 // UpdateAvailable is published when a newer image version is available.
 type UpdateAvailable struct {
-	Container    Container
-	Host         string
-	Repo         string
-	CurrentTag   string
-	LatestTag    string
+	Container  Container
+	Host       string
+	Repo       string
+	CurrentTag string
+	LatestTag  string
+	// Bump is major|minor|patch for semver/numeric tag updates; empty for digest.
+	Bump         string
 	LocalDigest  string
 	RemoteDigest string
 	CheckedAt    time.Time
 }
+
+// Semver/numeric bump kinds for UpdateAvailable.Bump and notifier templates.
+const (
+	BumpMajor = "major"
+	BumpMinor = "minor"
+	BumpPatch = "patch"
+)

@@ -68,7 +68,7 @@ Generic HTTP POST (custom hooks). Shared HTTP retry helper with Telegram. Logs o
 
 Set `url`, `Authorization`, and `proxy` via env (`VERSENTRY_WEBHOOK_URL`, `VERSENTRY_WEBHOOK_AUTHORIZATION`, `VERSENTRY_WEBHOOK_PROXY`) or YAML — see [Configuration — environment variables](configuration.md#environment-variables).
 
-**Default JSON payload** (no `template`): envelope with `instance`, `count`, and `updates[]`. Each update has `container`, `image`, `host`, `current_tag`, `latest_tag`, `change`, `url`, `mode` (`semver` or `digest`). In `simple` mode the same envelope is sent with `count: 1`.
+**Default JSON payload** (no `template`): envelope with `instance`, `count`, and `updates[]`. Each update has `container`, `image`, `host`, `current_tag`, `latest_tag`, `change`, `url`, `mode` (`semver` or `digest`), and optional `bump` (`major`/`minor`/`patch` when applicable). In `simple` mode the same envelope is sent with `count: 1`.
 
 **Custom `template`:** `simple` mode receives one update as `ItemData`. `digest` mode receives the full payload struct (`Instance`, `Count`, `Updates` slice). Default `Content-Type` is `application/json`; override via `headers`.
 
@@ -333,11 +333,12 @@ Shared field builders live in `internal/notifier/format` (`ItemData`, `Payload`)
 | `{{.Container}}` | Container name |
 | `{{.Image}}` | Image repo (`library/caddy`) |
 | `{{.Tag}}` | Current tag (`event.CurrentTag`) |
-| `{{.Change}}` | Ready-made change line: `2.11.3 → 2.11.4` or `digest changed: abc123… → def456…` |
+| `{{.Change}}` | Ready-made change line: `2.11.3 → 2.11.4`, or `2.8.1 → 3.2.0 (major)` for cross-major, or `digest changed: abc123… → def456…` |
 | `{{.URL}}` | Web link (may be empty) — see [Notification URLs](#notification-urls) |
 | `{{.CurrentTag}}` | Current tag (same value as `Tag`) |
 | `{{.LatestTag}}` | Newer tag (empty for digest-only updates) |
 | `{{.Host}}` | Registry host |
+| `{{.Bump}}` | `major` / `minor` / `patch` for tag updates; empty for digest. Optional — old templates that omit it keep working. Default text only appends ` (major)` to `Change` for cross-major. |
 
 ### Digest wrapper (telegram / gotify / ntfy `digest_template`)
 

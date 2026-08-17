@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/BlackRaincoat/versentry/internal/model"
 )
 
 // Strict dotted numeric tags: optional v, then digits and dots only (no suffix).
@@ -14,13 +16,6 @@ var numericTagRE = regexp.MustCompile(`^v?\d+(\.\d+)+$`)
 type numericVersion struct {
 	segments []int
 	original string
-}
-
-func (v numericVersion) major() int {
-	if len(v.segments) == 0 {
-		return 0
-	}
-	return v.segments[0]
 }
 
 // parseNumericVersion accepts only ^v?\d+(\.\d+)+$.
@@ -70,7 +65,8 @@ func compareNumeric(a, b numericVersion) int {
 	return 0
 }
 
-// selectNumericTag picks the newest same-major numeric tag (missing segments = 0).
+// selectNumericTag picks the newest numeric tag across majors (missing segments = 0).
+// Pin a major line with include (e.g. ^2\.) — there is no silent same-major filter.
 func selectNumericTag(current numericVersion, tags []string) (string, numericVersion, bool) {
 	var best numericVersion
 	var bestTag string
@@ -78,11 +74,11 @@ func selectNumericTag(current numericVersion, tags []string) (string, numericVer
 	currentRaw := current.original
 
 	for _, raw := range tags {
+		if isBareIntegerTag(raw) {
+			continue // same policy as semver candidates (numeric RE already needs a dot)
+		}
 		v, ok := parseNumericVersion(raw)
 		if !ok {
-			continue
-		}
-		if v.major() != current.major() {
 			continue
 		}
 		if !found {
@@ -101,6 +97,23 @@ func selectNumericTag(current numericVersion, tags []string) (string, numericVer
 		return "", numericVersion{}, false
 	}
 	return bestTag, best, true
+}
+
+// numericBump classifies current → latest by first three segments (major/minor/patch).
+func numericBump(current, latest numericVersion) string {
+	seg := func(v numericVersion, i int) int {
+		if i < len(v.segments) {
+			return v.segments[i]
+		}
+		return 0
+	}
+	if seg(latest, 0) != seg(current, 0) {
+		return model.BumpMajor
+	}
+	if seg(latest, 1) != seg(current, 1) {
+		return model.BumpMinor
+	}
+	return model.BumpPatch
 }
 
 // preferEqualDottedTag chooses between equal numeric versions.

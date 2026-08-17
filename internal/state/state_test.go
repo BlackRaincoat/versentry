@@ -225,7 +225,7 @@ func TestFilterSameImageDifferentContainersIndependent(t *testing.T) {
 	}
 
 	other := model.UpdateAvailable{
-		Container:  model.Container{Name: "remnawave-db"},
+		Container:  model.Container{Name: "app-db"},
 		Host:       "index.docker.io",
 		Repo:       "library/postgres",
 		CurrentTag: "17.1",

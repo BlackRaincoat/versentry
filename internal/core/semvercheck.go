@@ -3,17 +3,18 @@ package core
 import (
 	"strings"
 
+	"github.com/BlackRaincoat/versentry/internal/model"
 	"github.com/Masterminds/semver/v3"
 )
 
 // TagSelector chooses the best candidate tag from a registry tag list.
-// The default implementation applies same-major, stable-only selection.
+// The default implementation picks the newest stable tag (any major).
 // Per-image rules can replace this later without changing the engine.
 type TagSelector interface {
 	Select(current *semver.Version, tags []string) (tag string, version *semver.Version, ok bool)
 }
 
-// DefaultTagSelector picks the newest stable tag within the current major version.
+// DefaultTagSelector picks the newest stable tag across majors.
 type DefaultTagSelector struct{}
 
 // Select implements the default tag selection strategy.
@@ -21,10 +22,10 @@ func (DefaultTagSelector) Select(current *semver.Version, tags []string) (string
 	return selectSemverTag(current, tags, true)
 }
 
-// RuleTagSelector picks the newest semver tag within the current major version.
+// RuleTagSelector picks the newest semver tag across majors.
 // Unlike DefaultTagSelector, it does not drop prerelease/suffix tags: after an
 // include filter, suffixes are part of the valid tag line (e.g. 17.10-alpine3.24).
-// Same-major is kept for softer include patterns that do not pin the major.
+// Pin a major line with include (e.g. ^2\.) — there is no silent same-major filter.
 type RuleTagSelector struct{}
 
 // Select implements tag selection for include-filtered tag sets.
@@ -38,14 +39,14 @@ func selectSemverTag(current *semver.Version, tags []string, skipPrerelease bool
 	currentRaw := current.Original()
 
 	for _, raw := range tags {
+		if isBareIntegerTag(raw) {
+			continue // CI/build numbers — not version candidates (current tag unchanged)
+		}
 		v, err := semver.NewVersion(raw)
 		if err != nil {
 			continue
 		}
 		if skipPrerelease && v.Prerelease() != "" {
-			continue
-		}
-		if v.Major() != current.Major() {
 			continue
 		}
 		if best == nil || v.GreaterThan(best) || (v.Equal(best) && preferEqualSemverTag(currentRaw, raw, bestTag)) {
@@ -58,6 +59,17 @@ func selectSemverTag(current *semver.Version, tags []string, skipPrerelease bool
 		return "", nil, false
 	}
 	return bestTag, best, true
+}
+
+// semverBump classifies current → latest as major|minor|patch.
+func semverBump(current, latest *semver.Version) string {
+	if latest.Major() != current.Major() {
+		return model.BumpMajor
+	}
+	if latest.Minor() != current.Minor() {
+		return model.BumpMinor
+	}
+	return model.BumpPatch
 }
 
 // tagForm describes the pinning shape of a registry tag string.

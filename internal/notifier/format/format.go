@@ -30,6 +30,8 @@ type ItemData struct {
 	CurrentTag string
 	LatestTag  string
 	Host       string
+	// Bump is major|minor|patch for tag updates; empty for digest. Optional in templates.
+	Bump string
 }
 
 // DigestData is the template context for a digest batch.
@@ -49,6 +51,7 @@ type UpdateEntry struct {
 	Change     string `json:"change"`
 	URL        string `json:"url,omitempty"`
 	Mode       string `json:"mode"`
+	Bump       string `json:"bump,omitempty"`
 }
 
 // Payload is the default webhook JSON envelope.
@@ -77,6 +80,7 @@ func ItemFromEvent(instanceName string, event model.UpdateAvailable, escapeHTML 
 		CurrentTag: escape(event.CurrentTag, escapeHTML),
 		LatestTag:  escape(event.LatestTag, escapeHTML),
 		Host:       escape(event.Host, escapeHTML),
+		Bump:       event.Bump,
 	}
 }
 
@@ -92,6 +96,7 @@ func UpdateEntryFromEvent(event model.UpdateAvailable) UpdateEntry {
 		Change:     item.Change,
 		URL:        item.URL,
 		Mode:       TrackingMode(event),
+		Bump:       event.Bump,
 	}
 }
 
@@ -117,11 +122,16 @@ func TrackingMode(event model.UpdateAvailable) string {
 }
 
 // ChangeText formats the human-readable change line.
+// Cross-major tag updates append " (major)"; minor/patch stay unmarked.
 func ChangeText(event model.UpdateAvailable, escapeHTML bool) string {
 	if event.LatestTag != "" {
 		left := escape(event.CurrentTag, escapeHTML)
 		right := escape(event.LatestTag, escapeHTML)
-		return left + " → " + right
+		s := left + " → " + right
+		if event.Bump == model.BumpMajor {
+			s += " (major)"
+		}
+		return s
 	}
 	return "digest changed: " +
 		escape(ShortDigest(event.LocalDigest), escapeHTML) +

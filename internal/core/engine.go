@@ -227,8 +227,10 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 
 	latestTag, latest, ok := selector.Select(current, tags)
 	if !ok {
+		e.logSkippedBareSemverCandidates(c.Name, parsed.Repo, current, nil, tags)
 		return e.skipped(base, "no matching semver tags in registry"), nil
 	}
+	e.logSkippedBareSemverCandidates(c.Name, parsed.Repo, current, latest, tags)
 
 	if latest.GreaterThan(current) {
 		update := model.UpdateAvailable{
@@ -237,6 +239,7 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 			Repo:       parsed.Repo,
 			CurrentTag: parsed.Tag,
 			LatestTag:  latestTag,
+			Bump:       semverBump(current, latest),
 			CheckedAt:  time.Now().UTC(),
 		}
 		return containerResult{
@@ -270,8 +273,11 @@ func (e *Engine) checkNumeric(
 	}
 	latestTag, latest, ok := selectNumericTag(current, tags)
 	if !ok {
+		e.logSkippedBareNumericCandidates(c.Name, parsed.Repo, current, numericVersion{}, tags)
 		return e.skipped(base, "no matching numeric tags in registry"), nil
 	}
+	e.logSkippedBareNumericCandidates(c.Name, parsed.Repo, current, latest, tags)
+
 	if compareNumeric(latest, current) > 0 {
 		update := model.UpdateAvailable{
 			Container:  c,
@@ -279,6 +285,7 @@ func (e *Engine) checkNumeric(
 			Repo:       parsed.Repo,
 			CurrentTag: parsed.Tag,
 			LatestTag:  latestTag,
+			Bump:       numericBump(current, latest),
 			CheckedAt:  time.Now().UTC(),
 		}
 		return containerResult{

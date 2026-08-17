@@ -4,6 +4,24 @@ All notable changes to Versentry are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follows [SemVer](https://semver.org/).
 
+## [1.4.0] - 2026-08-17
+
+### Added
+
+- DEBUG `list_tags` diagnostics via `Puller.Lister`: on success `pages` / `tags` / `duration` / `page_max_ms` / `page_avg_ms`; on timeout or error `list_tags incomplete` with pages/tags collected so far. INFO/WARN and overall registry timeout semantics unchanged.
+- Event field `Bump` (`major`/`minor`/`patch`) on semver/numeric updates for templates (`{{.Bump}}`) and webhook JSON (`bump`); digest updates leave it empty.
+- OCI registry HTTP dial, TLS, and response-header timeouts (separate from `timeouts.registry`), so a stuck dial or TLS handshake cannot wait out the full ceiling.
+- DEBUG `registry_http` traces per registry RoundTrip (`phase` = connect/tls/waiting_headers, `reused`, duration); `list_tags incomplete` adds `http_trips` / `last_phase` / `last_ms` to show whether a hang died on the parent ctx or inside a transport attempt.
+
+### Changed
+
+- Semver/numeric selection is notify-oriented: no silent same-major filter (newest suitable tag; cross-major marked `2.8.1 → 3.2.0 (major)` / `Bump=major`; pin a line with `include`, e.g. `^2\.` — works when the **current** tag is ordinary semver/numeric, not digest). As the companion half of that change, bare integer tags (`^v?\d+$`, e.g. CI `8400`) are excluded as **candidates** only — they would otherwise win as false majors once same-major no longer hid them; current bare majors (`postgres:16`) stay on the semver path. **DEBUG** only when an omitted bare would have beaten the selected tag (e.g. `8400` vs `1.29.1`); silent when selected already covers it (`3` under `3.2.1`). **WARN** if the next major exists solely as a bare tag (`17` with no `17.x`). **Migration:** first pass after upgrade may notify about majors that same-major previously hid; that burst is expected.
+- DEBUG registry errors no longer show Go-quoted URLs (`Get \"https://…\"`); logged as `Get https://…: cause`.
+
+### Fixed
+
+- On OCI `timeout awaiting response headers`, close that HTTP connection so go-containerregistry's retry dials fresh instead of reusing a live mux with a stuck stream. Fleet: one hang + `reused=false` + shorter duration. Eviction does not help when Hub stalls on an expensive `tags/list?n=1000` for a large repo: the same connection can immediately serve ping and small tag lists while that one request never gets headers; gcr retries until `timeouts.registry` skips the image this pass. Dial/TLS timeouts, 429, and cancel/SIGTERM do not evict. DEBUG `evicted hung http2 connection`.
+
 ## [1.3.0] - 2026-07-24
 
 ### Added
@@ -126,6 +144,7 @@ First public release.
 - Multi-arch Docker image (amd64, arm64)
 - `VERSENTRY_*` environment variable overrides for secrets and paths
 
+[1.4.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.4.0
 [1.3.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.3.0
 [1.2.3]: https://github.com/BlackRaincoat/versentry/releases/tag/1.2.3
 [1.2.2]: https://github.com/BlackRaincoat/versentry/releases/tag/1.2.2

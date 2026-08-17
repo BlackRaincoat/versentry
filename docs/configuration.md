@@ -32,7 +32,7 @@ Credentials and notifier endpoints are often injected via **`VERSENTRY_*` enviro
 | `exclude_containers` | no | — | Exact container names to skip — see [Container scope](#container-scope-opt-out) |
 | `instance_name` | no | see below | Name shown in notification headers |
 | `timeouts.provider` | no | `10s` | Docker API timeout |
-| `timeouts.registry` | no | `30s` | Registry API timeout |
+| `timeouts.registry` | no | `30s` | Overall ceiling per `ListTags` / `TagDigest`; dial/header hang budgets are separate — see [Registries](registries.md#per-pass-cache-and-rate-limits) |
 | `interval` | no | `1h` | Period for `versentry run` when `schedule` is empty |
 | `schedule` | no | — | Cron expression (5 fields) for `versentry run`; overrides `interval` |
 | `timezone` | when `schedule` | see below | Cron only — see [TZ vs timezone](#tz-vs-timezone) |
@@ -319,7 +319,7 @@ A notifier failure (e.g. bad Telegram token) logs **ERROR** but **does not stop*
 1. List running containers (Docker socket); skip `exclude_containers` names and `versentry.watch=false` (OR).
 2. Parse image ref → registry host + repo + tag.
 3. If rule/label sets `track: digest` → compare local vs remote digest for the current tag (see [Rules](rules.md#track-digest)).
-4. Else if **semver tag:** list tags → apply `include` filter if any → newest same-major tag → notify if newer.
+4. Else if **semver or numeric tag:** list tags → apply `include` filter if any → newest matching tag (any major) → notify if newer (cross-major marked `(major)` / `Bump=major`).
 5. Else **non-semver tag** (`latest`, …): compare local manifest digest vs registry tag digest.
 6. Batch all updates from the pass → notifiers (`run` may filter already-notified targets before step 6).
 

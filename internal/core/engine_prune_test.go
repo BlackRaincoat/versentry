@@ -113,7 +113,7 @@ func TestRunOnceSameImageDifferentLinesSeparateKeys(t *testing.T) {
 		&stubProvider{listFn: func(ctx context.Context) ([]model.Container, error) {
 			return []model.Container{
 				{Name: "umami_db", ImageRef: "postgres:16-alpine"},
-				{Name: "remnawave-db", ImageRef: "postgres:17"},
+				{Name: "app-db", ImageRef: "postgres:17"},
 			}, nil
 		}},
 		nil,
@@ -132,7 +132,7 @@ func TestRunOnceSameImageDifferentLinesSeparateKeys(t *testing.T) {
 	}
 	want := map[string]bool{
 		"umami_db|index.docker.io/library/postgres":     true,
-		"remnawave-db|index.docker.io/library/postgres": true,
+		"app-db|index.docker.io/library/postgres": true,
 	}
 	for _, k := range activeKeys {
 		if !want[k] {

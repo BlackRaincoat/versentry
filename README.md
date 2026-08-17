@@ -10,7 +10,7 @@ Works on self-hosted hosts; Telegram notifier traffic can use a SOCKS5 or HTTP p
 - **Any OCI registry** — public hosts (Docker Hub, GHCR, Quay, GitLab) work out of the box; private and self-hosted via `type: oci`
 - **Notifications** — Telegram, Discord, Gotify, ntfy, generic webhook, stdout; optional proxy on HTTP notifiers
 - **Delivery modes** — `simple` or `digest`; Go `text/template` overrides where supported
-- **Detection** — semver (same-major) and digest comparison for non-semver tags (`latest`, …)
+- **Detection** — semver/numeric (newest tag; cross-major marked) and digest comparison for non-version tags (`latest`, …)
 - **Notify-only** — never modifies containers or images on the host
 - **Scheduling** — fixed `interval` or cron `schedule` with timezone
 - **Resilience** — HTTP retries on notifiers; per-pass registry dedup and rate-limit handling

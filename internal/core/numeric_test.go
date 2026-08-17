@@ -59,14 +59,41 @@ func TestCompareNumericPadsMissing(t *testing.T) {
 	}
 }
 
-func TestSelectNumericTagNewestSameMajor(t *testing.T) {
+func TestSelectNumericTagNewestAcrossMajors(t *testing.T) {
 	cur, ok := parseNumericVersion("0.63.1.3")
 	if !ok {
 		t.Fatal("parse current")
 	}
 	tag, latest, ok := selectNumericTag(cur, []string{"0.63.1.4", "0.63.1.5", "0.63.2.0", "1.0.0.0"})
-	if !ok || tag != "0.63.2.0" {
-		t.Fatalf("got %q %+v ok=%v, want 0.63.2.0", tag, latest, ok)
+	if !ok || tag != "1.0.0.0" {
+		t.Fatalf("got %q %+v ok=%v, want 1.0.0.0 (newest across majors)", tag, latest, ok)
+	}
+	if bump := numericBump(cur, latest); bump != model.BumpMajor {
+		t.Fatalf("bump=%q, want major", bump)
+	}
+}
+
+func TestSelectNumericTagIncludePinsMajor(t *testing.T) {
+	cur, _ := parseNumericVersion("2.8.1.0")
+	re := regexp.MustCompile(`^2\.`)
+	tags := filterTags([]string{"2.8.2.0", "3.2.0.0"}, re)
+	tag, latest, ok := selectNumericTag(cur, tags)
+	if !ok || tag != "2.8.2.0" {
+		t.Fatalf("got %q ok=%v, want 2.8.2.0 after include ^2\\.", tag, ok)
+	}
+	if bump := numericBump(cur, latest); bump != model.BumpPatch {
+		t.Fatalf("bump=%q, want patch", bump)
+	}
+}
+
+func TestSelectNumericTagNoDowngrade(t *testing.T) {
+	cur, _ := parseNumericVersion("3.2.0.0")
+	tag, latest, ok := selectNumericTag(cur, []string{"2.8.2.0", "3.2.0.0", "3.1.9.0"})
+	if !ok || tag != "3.2.0.0" {
+		t.Fatalf("got %q ok=%v, want current (no downgrade)", tag, ok)
+	}
+	if compareNumeric(latest, cur) != 0 {
+		t.Fatal("selected must equal current")
 	}
 }
 
@@ -113,6 +140,54 @@ func TestLetterSuffixNotNumeric(t *testing.T) {
 	}
 }
 
+func TestCheckContainerCrossMajorBump(t *testing.T) {
+	reg := &modeTestRegistry{
+		host:     imageref.DockerHubHost,
+		listTags: []string{"2.8.2", "3.2.0", "2.8.1"},
+	}
+	eng := NewEngine(&modeTestProvider{}, nil, config.Timeouts{}, slog.Default(), nil, nil)
+	eng.registries = append(eng.registries, reg)
+
+	c := model.Container{Name: "api", ImageRef: "example/app:2.8.1"}
+	result, err := eng.checkContainer(context.Background(), c, registrypass.New(slog.Default()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != statusUpdate || result.LatestTag != "3.2.0" {
+		t.Fatalf("status=%s latest=%q", result.Status, result.LatestTag)
+	}
+	if result.Update == nil || result.Update.Bump != model.BumpMajor {
+		t.Fatalf("bump=%v, want major", result.Update)
+	}
+}
+
+func TestCheckContainerIncludePinsMajor(t *testing.T) {
+	rules, err := NewConfigRuleResolver([]config.RuleConfig{
+		{Image: "example/app", Include: "^2\\."},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := &modeTestRegistry{
+		host:     imageref.DockerHubHost,
+		listTags: []string{"2.8.2", "3.2.0"},
+	}
+	eng := NewEngine(&modeTestProvider{}, nil, config.Timeouts{}, slog.Default(), rules, nil)
+	eng.registries = append(eng.registries, reg)
+
+	c := model.Container{Name: "api", ImageRef: "example/app:2.8.1"}
+	result, err := eng.checkContainer(context.Background(), c, registrypass.New(slog.Default()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != statusUpdate || result.LatestTag != "2.8.2" {
+		t.Fatalf("status=%s latest=%q, want 2.8.2", result.Status, result.LatestTag)
+	}
+	if result.Update == nil || result.Update.Bump != model.BumpPatch {
+		t.Fatalf("bump=%v, want patch", result.Update)
+	}
+}
+
 func TestCheckContainerNumericUpdate(t *testing.T) {
 	reg := &modeTestRegistry{
 		host:     imageref.DockerHubHost,
@@ -128,6 +203,9 @@ func TestCheckContainerNumericUpdate(t *testing.T) {
 	}
 	if result.Status != statusUpdate || result.LatestTag != "0.63.2.0" {
 		t.Fatalf("status=%s latest=%q", result.Status, result.LatestTag)
+	}
+	if result.Update == nil || result.Update.Bump != model.BumpPatch {
+		t.Fatalf("bump=%v, want patch (third segment 1→2)", result.Update)
 	}
 	if reg.digestCalls != 0 {
 		t.Fatalf("numeric path must not call TagDigest, got %d", reg.digestCalls)

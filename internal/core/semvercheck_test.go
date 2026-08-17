@@ -1,8 +1,10 @@
 package core
 
 import (
+	"regexp"
 	"testing"
 
+	"github.com/BlackRaincoat/versentry/internal/model"
 	"github.com/Masterminds/semver/v3"
 )
 
@@ -89,7 +91,53 @@ func TestDefaultTagSelector_StillPicksStrictlyNewer(t *testing.T) {
 	current := mustVer(t, "8.2.2")
 	got, _, ok := DefaultTagSelector{}.Select(current, []string{"8.2.2", "8.2.1", "7.9.0"})
 	if !ok || got != "8.2.2" {
-		t.Fatalf("got %q ok=%v, want current 8.2.2 as best same-major", got, ok)
+		t.Fatalf("got %q ok=%v, want current 8.2.2 as newest (no downgrade)", got, ok)
+	}
+}
+
+func TestDefaultTagSelector_PicksCrossMajor(t *testing.T) {
+	current := mustVer(t, "2.8.1")
+	got, ver, ok := DefaultTagSelector{}.Select(current, []string{"2.8.2", "3.2.0"})
+	if !ok || got != "3.2.0" {
+		t.Fatalf("got %q ok=%v, want 3.2.0", got, ok)
+	}
+	if bump := semverBump(current, ver); bump != model.BumpMajor {
+		t.Fatalf("bump=%q, want major", bump)
+	}
+}
+
+func TestDefaultTagSelector_PatchWithinMajor(t *testing.T) {
+	current := mustVer(t, "2.8.1")
+	got, ver, ok := DefaultTagSelector{}.Select(current, []string{"2.8.2"})
+	if !ok || got != "2.8.2" {
+		t.Fatalf("got %q ok=%v, want 2.8.2", got, ok)
+	}
+	if bump := semverBump(current, ver); bump != model.BumpPatch {
+		t.Fatalf("bump=%q, want patch", bump)
+	}
+}
+
+func TestDefaultTagSelector_MinorWithinMajor(t *testing.T) {
+	current := mustVer(t, "2.8.1")
+	got, ver, ok := DefaultTagSelector{}.Select(current, []string{"2.9.0", "2.8.2"})
+	if !ok || got != "2.9.0" {
+		t.Fatalf("got %q ok=%v, want 2.9.0", got, ok)
+	}
+	if bump := semverBump(current, ver); bump != model.BumpMinor {
+		t.Fatalf("bump=%q, want minor", bump)
+	}
+}
+
+func TestRuleTagSelector_IncludePinsMajor(t *testing.T) {
+	current := mustVer(t, "2.8.1")
+	re := regexp.MustCompile(`^2\.`)
+	tags := filterTags([]string{"2.8.2", "3.2.0"}, re)
+	got, ver, ok := RuleTagSelector{}.Select(current, tags)
+	if !ok || got != "2.8.2" {
+		t.Fatalf("got %q ok=%v, want 2.8.2 (3.x excluded by include)", got, ok)
+	}
+	if bump := semverBump(current, ver); bump != model.BumpPatch {
+		t.Fatalf("bump=%q, want patch", bump)
 	}
 }
 
