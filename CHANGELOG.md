@@ -6,6 +6,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follo
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-08-22
+
 ### Changed
 
 - CI: `setup-go` `check-latest: true`; image builds `pull: true` so the floating Go 1.25 pin follows the current patch instead of a cached toolchain or a stale `golang:1.25-alpine` layer.
@@ -155,6 +157,7 @@ First public release.
 - Multi-arch Docker image (amd64, arm64)
 - `VERSENTRY_*` environment variable overrides for secrets and paths
 
+[1.4.1]: https://github.com/BlackRaincoat/versentry/releases/tag/1.4.1
 [1.4.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.4.0
 [1.3.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.3.0
 [1.2.3]: https://github.com/BlackRaincoat/versentry/releases/tag/1.2.3
