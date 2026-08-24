@@ -6,7 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follo
 
 ## [Unreleased]
 
-## [1.4.1] - 2026-08-22
+## [1.4.1] - 2026-08-25
 
 ### Changed
 
