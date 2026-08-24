@@ -57,3 +57,34 @@ func TestTextHandlerUnquotedValues(t *testing.T) {
 		t.Fatalf("reason should not escape quotes: %q", got)
 	}
 }
+
+func TestTextHandlerQuotesInvalidUTF8(t *testing.T) {
+	var buf bytes.Buffer
+	h := NewHandler(&buf, slog.LevelInfo)
+
+	ts := time.Date(2026, 8, 18, 11, 0, 29, 0, time.UTC)
+	bad := slog.NewRecord(ts, slog.LevelInfo, "first", 0)
+	bad.AddAttrs(slog.String("container", "ok\x80name"))
+	if err := h.Handle(t.Context(), bad); err != nil {
+		t.Fatal(err)
+	}
+	next := slog.NewRecord(ts, slog.LevelWarn, "second", 0)
+	if err := h.Handle(t.Context(), next); err != nil {
+		t.Fatal(err)
+	}
+
+	got := buf.String()
+	if strings.Contains(got, "ok\x80name") {
+		t.Fatalf("invalid UTF-8 must be quoted, got %q", got)
+	}
+	if !strings.Contains(got, `\x80`) {
+		t.Fatalf("expected quoted invalid byte, got %q", got)
+	}
+	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want 2 lines, got %d: %q", len(lines), got)
+	}
+	if !strings.HasPrefix(lines[1], "2026-08-18 11:00:29 WARN second") {
+		t.Fatalf("next line must start with timestamp, got %q", lines[1])
+	}
+}

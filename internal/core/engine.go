@@ -39,6 +39,7 @@ type containerResult struct {
 	RemoteDigest string
 	ImageRef     string
 	Update       *model.UpdateAvailable
+	quiet        bool // skip at DEBUG (expected: bare digest, no image name)
 }
 
 // Engine orchestrates container discovery and version comparison.
@@ -164,7 +165,7 @@ func (e *Engine) RunOnce(ctx context.Context) ([]model.UpdateAvailable, []string
 
 func entryKey(c model.Container) (string, bool) {
 	parsed, err := imageref.Parse(c.ImageRef)
-	if err != nil {
+	if err != nil || parsed.Repo == "" {
 		return "", false
 	}
 	return state.FormatEntryKey(c.Name, c.ID, parsed.Host, parsed.Repo), true
@@ -179,6 +180,11 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 	}
 
 	if parsed.Tag == "" {
+		if parsed.Repo == "" {
+			r := e.skipped(base, "bare digest reference")
+			r.quiet = true
+			return r, nil
+		}
 		return e.skipped(base, "digest-only reference"), nil
 	}
 
@@ -449,6 +455,10 @@ func (e *Engine) logContainerResult(r containerResult) {
 		e.log.Debug("container checked", attrs...)
 	case statusSkipped:
 		attrs = append(attrs, "reason", r.Reason)
+		if r.quiet {
+			e.log.Debug("container runs from bare digest, no image ref to track", attrs...)
+			return
+		}
 		e.log.Warn("container skipped", attrs...)
 	}
 }

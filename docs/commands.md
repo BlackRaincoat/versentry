@@ -51,7 +51,7 @@ Columns: `CONTAINER`, `IMAGE:TAG`, `MODE`, `URL` (`(no url)` when empty). Table 
 | `numeric` | Strict dotted numeric only (`v0.63.1.3`); segment comparison when semver rejects the tag |
 | `digest(rule)` | Explicit `track: digest` (config or label) |
 | `digest(auto)` | Neither semver nor strict numeric — digest fallback (rebuild of the **same** tag only) |
-| `error` | Unusable ref (parse failure, digest-only image) |
+| `error` | Unusable ref (parse failure, digest-only `name@sha256:…`, or bare `sha256:<digest>` with no image name) |
 
 One-time WARN on check/run/links when `digest(auto)` is used (except tag `latest`), and when an `include` rule is ignored under digest tracking — see [Rules](rules.md#digest-diagnostics).
 

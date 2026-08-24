@@ -10,6 +10,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follo
 
 - CI: `setup-go` `check-latest: true`; image builds `pull: true` so the floating Go 1.25 pin follows the current patch instead of a cached toolchain or a stale `golang:1.25-alpine` layer.
 
+### Fixed
+
+- Containers started from a bare image digest (`sha256:<64 hex>`, no repository name — e.g. a buildx builder) are skipped at DEBUG instead of being parsed as Docker Hub `library/sha256` and warned as a non-semver tag. Named pins (`nginx@sha256:…`) are unchanged.
+- Log attribute values that are not valid UTF-8 are quoted, so stray bytes from Docker metadata cannot scramble the next log line in a terminal.
+
 ## [1.4.0] - 2026-08-17
 
 ### Added

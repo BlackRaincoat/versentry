@@ -100,3 +100,17 @@ func TestLinkRowNoURL(t *testing.T) {
 		t.Fatalf("url = %q", row.URL)
 	}
 }
+
+func TestLinkRowBareDigest(t *testing.T) {
+	eng := NewEngine(&stubProvider{}, nil, config.Timeouts{}, slog.Default(), nil, nil)
+	row := linkRowFor(eng, model.Container{
+		Name:     "buildx_buildkit_builder-c1120f41-b5e3-4612-98e3-0e0635a209070",
+		ImageRef: "sha256:e0e67ea9c4bb0000000000000000000000000000000000000000000000000000",
+	})
+	if row.Mode != "error" {
+		t.Fatalf("mode = %q, want error", row.Mode)
+	}
+	if row.URL != "bare digest reference" {
+		t.Fatalf("url = %q", row.URL)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strconv"
 	"sync"
+	"unicode/utf8"
 )
 
 // TextHandler writes log lines as:
@@ -137,6 +138,9 @@ func appendUnquoted(buf []byte, s string) []byte {
 
 func needsQuote(s string) bool {
 	if s == "" {
+		return true
+	}
+	if !utf8.ValidString(s) {
 		return true
 	}
 	for _, r := range s {

@@ -75,11 +75,15 @@ func linkRowFor(e *Engine, c model.Container) LinkRow {
 		}
 	}
 	if parsed.Tag == "" {
+		url := "digest-only reference"
+		if parsed.Repo == "" {
+			url = "bare digest reference"
+		}
 		return LinkRow{
 			Container: name,
 			ImageTag:  imageTag,
 			Mode:      "error",
-			URL:       "digest-only reference",
+			URL:       url,
 		}
 	}
 
