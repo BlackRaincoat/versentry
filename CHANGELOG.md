@@ -6,6 +6,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follo
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-05
+
+### Added
+
+- `apprise` notifier: send through your own [Apprise API](https://github.com/caronc/apprise-api) server to email, Slack, Pushover, Matrix, Teams and 100+ other services. Stateful (`key` + optional `tag`) or stateless (`urls`), optional Basic Auth, markdown templates like ntfy/Gotify, message type `warning` for major bumps and reminders. An apprise-api `424` (some destinations failed) counts as delivered with a WARN, so working destinations are not re-sent duplicates every pass. Env: `VERSENTRY_APPRISE_*`.
+- `min_age` (global and per `rules[]` entry, `0` = off): notify only when the new image is at least that old in the registry (`created` of the config blob). Semver/numeric fall back to the newest newer version that is old enough (up to 5 lookups per container per pass); otherwise the container is **pending** — no notification, no state write, re-checked next pass (INFO `update pending`, `pending=N` in `check complete`). Unknown build time (zeroed `created`) is not delayed. Each lookup costs one Docker Hub pull and runs only for found updates.
+- `remind_after` (`versentry run`): re-send a still-pending update once its last notification is at least that old, marked ` (reminder)` in the change text (`{{.Reminder}}` in templates, `"reminder": true` in webhook JSON). Off by default (notify once). Uses the existing `notified_at` in the state file; enabling it sends one round of reminders for updates already older than the window.
+- `watch_by_default: false` (opt-in): check only containers named in the new `watch_containers` list or labeled `versentry.watch=true`; everything else, including newly started containers, is ignored. Exclusion (`exclude_containers`, `versentry.watch=false`) still wins; a name in both lists is a config error. Default `true` keeps today's opt-out behavior (`watch_containers` is then ignored with a WARN).
+- Labels `versentry.track=auto` (cancel a config `track: digest` for one container) and `versentry.min_age` (`3d`, `0` = off) — every per-image rule field can now be overridden per container.
+- Config durations accept a day count: `3d`, `1d12h`.
+- Floating-tag hint: containers on a moving semver tag (`postgres:16`, `redis:7-alpine`, `nginx:1.27`) get a one-time INFO when the registry has more specific tags for that line (`line_tag=16.10`) — semver reports newer versions but not rebuilds of the running tag; use `track: digest` for rebuild alerts. `versentry links` shows MODE `semver(floating)` for bare-major tags. Detection and state are unchanged.
+- `versentry notify-test`: sends a sample batch (one semver update with a GitHub releases link, one digest update) through every configured notifier to verify credentials and templates. No Docker/registry calls, no state; exits non-zero if any notifier fails.
+
+### Changed
+
+- **Notification state is tracked per notifier.** If one notifier fails (expired webhook, dead token), only that notifier gets the update again on the next scheduled pass; notifiers that already delivered it are no longer sent a duplicate every pass until the broken one is fixed. Reminders are timed per notifier. Existing state counts as delivered to all notifiers (nothing is re-sent on upgrade; file version unchanged, still readable by 1.4.x). A notifier added later receives the currently pending updates once. Notifiers get an ID — `type`, then `type#2`, … — or an explicit optional `name:`, used in logs and state.
+- **Rule precedence:** a config `rules[]` entry is now the base for an image and a container's `versentry.include` / `versentry.track` labels **override it field by field** for that container (other fields, e.g. `min_age`, are inherited). Previously a config rule replaced labels wholesale and they were silently ignored. **Migration:** only affects containers that have both a config rule for their image and such labels — those labels now take effect; a one-time INFO `container labels override config rule` lists them. If a label switches detection (semver ↔ digest), that container may be notified once.
+- `versentry.*` labels baked into an image by its publisher (Dockerfile `LABEL`) are ignored; only labels set on the container (Compose / `docker run`) count, so a third-party image cannot override central rules or opt itself in under `watch_by_default: false`.
+- Digest-mode checks (`latest`, other floating names, `track: digest`) resolve the tag digest with `HEAD` instead of `GET` on `/manifests/`. Docker Hub counts manifest `GET` as a pull against the anonymous per-IP rate limit shared with the host's own `docker pull`; `HEAD` is not counted. Same `Accept` list, so the compared digest (index for multi-arch) is unchanged — no re-notification. Falls back to `GET` only when a registry answers `HEAD` with 400/405/501 or without `Docker-Content-Digest` / `Content-Type` / `Content-Length` (DEBUG `tag_digest head fallback`); 404/401/403/429, timeouts and cancel do not fall back. Semver/numeric paths (`tags/list`) are unaffected.
+
+### Security
+
+- Notifier network errors (dial, TLS, timeout) no longer log the full request URL. Go's `*url.Error` prints the whole URL, so the Discord webhook token (`/api/webhooks/<id>/<token>`) and secrets in generic `webhook` paths or queries (`/services/…`, `?token=`) leaked into `notify failed`, the retry `attempt failed, retrying` WARN, and `notifier failed`. The shared HTTP retry now keeps only `scheme://host` plus the cause (e.g. `Post "https://discord.com": dial tcp …: connection refused`); retry and timeout behavior are unchanged. This also covers Telegram's retry WARN, which ran before its token masking.
+
 ## [1.4.1] - 2026-08-25
 
 ### Changed

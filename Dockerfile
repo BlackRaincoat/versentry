@@ -30,7 +30,7 @@ RUN GOARCH=${TARGETARCH} go build -trimpath \
 FROM scratch
 
 LABEL org.opencontainers.image.title="Versentry" \
-    org.opencontainers.image.description="Notify-only Docker image update monitor. Alerts via Telegram, Discord, webhook, or stdout." \
+    org.opencontainers.image.description="Notify-only Docker image update monitor: Telegram, Discord, Gotify, ntfy, Apprise, webhook alerts." \
     org.opencontainers.image.source="https://github.com/BlackRaincoat/versentry" \
     org.opencontainers.image.licenses="MIT"
 

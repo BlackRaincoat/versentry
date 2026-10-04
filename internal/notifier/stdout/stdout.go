@@ -32,23 +32,27 @@ func (n *Notifier) Notify(ctx context.Context, events []model.UpdateAvailable) e
 
 func (n *Notifier) logOne(event model.UpdateAvailable) {
 	image := event.Repo + ":" + event.CurrentTag
+	var attrs []any
 	if event.LatestTag != "" {
-		slog.Info("container update",
+		attrs = []any{
 			"container", event.Container.Name,
 			"image", image,
 			"latest", event.LatestTag,
 			"host", event.Host,
-		)
-		return
+		}
+	} else {
+		attrs = []any{
+			"container", event.Container.Name,
+			"image", image,
+			"host", event.Host,
+			"local", shortDigest(event.LocalDigest),
+			"remote", shortDigest(event.RemoteDigest),
+		}
 	}
-
-	slog.Info("container update",
-		"container", event.Container.Name,
-		"image", image,
-		"host", event.Host,
-		"local", shortDigest(event.LocalDigest),
-		"remote", shortDigest(event.RemoteDigest),
-	)
+	if event.Reminder {
+		attrs = append(attrs, "reminder", true)
+	}
+	slog.Info("container update", attrs...)
 }
 
 func shortDigest(d string) string {

@@ -23,6 +23,8 @@ type UpdateAvailable struct {
 	LocalDigest  string
 	RemoteDigest string
 	CheckedAt    time.Time
+	// Reminder: same target notified before; re-sent because remind_after elapsed.
+	Reminder bool
 }
 
 // Semver/numeric bump kinds for UpdateAvailable.Bump and notifier templates.

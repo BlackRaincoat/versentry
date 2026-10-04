@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/BlackRaincoat/versentry/internal/registry"
 )
@@ -14,9 +15,10 @@ type Pass struct {
 	log *slog.Logger
 	mu  sync.Mutex
 
-	listTags   map[string]listTagsResult
-	tagDigests map[string]tagDigestResult
-	rateLimited map[string]struct{}
+	listTags     map[string]listTagsResult
+	tagDigests   map[string]tagDigestResult
+	imageCreated map[string]imageCreatedResult
+	rateLimited  map[string]struct{}
 
 	sleep sleepFunc
 }
@@ -31,17 +33,23 @@ type tagDigestResult struct {
 	err    error
 }
 
+type imageCreatedResult struct {
+	created time.Time
+	err     error
+}
+
 // New creates a per-pass registry layer. It must not be reused across RunOnce calls.
 func New(log *slog.Logger) *Pass {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Pass{
-		log:         log,
-		listTags:    make(map[string]listTagsResult),
-		tagDigests:  make(map[string]tagDigestResult),
-		rateLimited: make(map[string]struct{}),
-		sleep:       sleepContext,
+		log:          log,
+		listTags:     make(map[string]listTagsResult),
+		tagDigests:   make(map[string]tagDigestResult),
+		imageCreated: make(map[string]imageCreatedResult),
+		rateLimited:  make(map[string]struct{}),
+		sleep:        sleepContext,
 	}
 }
 
@@ -69,6 +77,37 @@ func (p *Pass) TagDigest(ctx context.Context, reg registry.Registry, host, repo,
 	digest, err := p.fetchTagDigest(ctx, reg, host, repo, tag)
 	p.storeTagDigest(key, tagDigestResult{digest: digest, err: err})
 	return digest, err
+}
+
+// ImageCreated returns when the image behind host/repo:tag was built, deduplicating
+// calls within the pass. Zero time with nil error: the registry does not implement
+// registry.ImageCreatedReader or had no usable timestamp (caller treats age as unknown).
+func (p *Pass) ImageCreated(ctx context.Context, reg registry.Registry, host, repo, tag string) (time.Time, error) {
+	reader, ok := reg.(registry.ImageCreatedReader)
+	if !ok {
+		return time.Time{}, nil
+	}
+	key := host + "/" + repo + ":" + tag
+
+	p.mu.Lock()
+	if p.isRateLimitedLocked(host) {
+		p.mu.Unlock()
+		return time.Time{}, registry.ErrRateLimited
+	}
+	if res, ok := p.imageCreated[key]; ok {
+		p.mu.Unlock()
+		p.log.Debug("registry cache hit", "op", "image_created", "host", host, "key", key)
+		return res.created, res.err
+	}
+	p.mu.Unlock()
+
+	created, err := fetchWithRetry(ctx, p, host, func() (time.Time, error) {
+		return reader.ImageCreated(ctx, repo, tag)
+	})
+	p.mu.Lock()
+	p.imageCreated[key] = imageCreatedResult{created: created, err: err}
+	p.mu.Unlock()
+	return created, err
 }
 
 func (p *Pass) cachedListTags(key, host, repo string) (listTagsResult, bool) {

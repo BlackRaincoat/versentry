@@ -35,6 +35,7 @@ var publicRegistryHosts = []string{
 }
 
 type notifierSlot struct {
+	id  string // config.NotifierIDs: name, else type / type#N
 	typ string
 	n   notifier.Notifier
 }
@@ -118,6 +119,10 @@ func NewApp(cfg *config.Config, log *slog.Logger) (*App, error) {
 	instanceName := config.ResolveInstanceName(cfg.InstanceName)
 	log.Info("notification instance name", "instance", instanceName)
 
+	ids, err := config.NotifierIDs(cfg.Notifiers)
+	if err != nil {
+		return nil, err
+	}
 	notifiers := make([]notifierSlot, 0, len(cfg.Notifiers))
 	for i, nc := range cfg.Notifiers {
 		pluginCfg := copyPluginConfig(nc.Config)
@@ -126,14 +131,14 @@ func NewApp(cfg *config.Config, log *slog.Logger) (*App, error) {
 		if err != nil {
 			return nil, fmt.Errorf("notifier[%d]: %w", i, err)
 		}
-		notifiers = append(notifiers, notifierSlot{typ: nc.Type, n: n})
+		notifiers = append(notifiers, notifierSlot{id: ids[i], typ: nc.Type, n: n})
 	}
 
 	configRules, err := NewConfigRuleResolver(cfg.Rules, log)
 	if err != nil {
 		return nil, fmt.Errorf("rules: %w", err)
 	}
-	// Config wins over container labels (variant A).
+	// Central config rules first; container labels override them per field.
 	rules := NewChainRuleResolver(configRules, NewLabelRuleResolver(log))
 
 	exclude, dups, err := config.ExcludeContainerSet(cfg.ExcludeContainers)
@@ -145,6 +150,26 @@ func NewApp(cfg *config.Config, log *slog.Logger) (*App, error) {
 	}
 
 	engine := NewEngine(prov, regs, cfg.Timeouts, log, rules, exclude)
+	watch, watchDups, err := config.WatchContainerSet(cfg.WatchContainers)
+	if err != nil {
+		return nil, fmt.Errorf("watch_containers: %w", err)
+	}
+	for _, name := range watchDups {
+		log.Warn("duplicate name in watch_containers", "name", name)
+	}
+	engine.SetWatchByDefault(cfg.WatchesByDefault())
+	engine.SetWatchContainers(watch)
+	switch {
+	case !cfg.WatchesByDefault():
+		log.Info("watch_by_default is false: only watch_containers and containers labeled versentry.watch=true are checked",
+			"watch_containers", len(watch))
+	case len(watch) > 0:
+		log.Warn("watch_containers is ignored while watch_by_default is true (every container is already checked)")
+	}
+	engine.SetMinAge(cfg.MinAge.Duration)
+	if cfg.MinAge.Duration > 0 {
+		log.Info("min_age enabled", "min_age", formatAge(cfg.MinAge.Duration))
+	}
 
 	return &App{
 		engine:    engine,
@@ -253,56 +278,117 @@ func withRegistryProxy(cfg map[string]any, globalProxy string) map[string]any {
 func (a *App) notifyAll(ctx context.Context, batch []model.UpdateAvailable) bool {
 	allOK := true
 	for _, slot := range a.notifiers {
-		if err := slot.n.Notify(ctx, batch); err != nil {
-			a.log.Error("notifier failed", "notifier", slot.typ, "error", err)
+		if !a.deliver(ctx, slot, batch) {
 			allOK = false
-			continue
 		}
-		a.log.Info("notifier delivered", "notifier", slot.typ, "updates", len(batch))
 	}
 	return allOK
 }
 
+func (a *App) deliver(ctx context.Context, slot notifierSlot, batch []model.UpdateAvailable) bool {
+	if err := slot.n.Notify(ctx, batch); err != nil {
+		a.log.Error("notifier failed", "notifier", slot.label(), "error", err)
+		return false
+	}
+	attrs := []any{"notifier", slot.label(), "updates", len(batch)}
+	if n := countReminders(batch); n > 0 {
+		attrs = append(attrs, "reminders", n)
+	}
+	a.log.Info("notifier delivered", attrs...)
+	return true
+}
+
+// label is the notifier ID for logs (falls back to type for hand-built slots).
+func (s notifierSlot) label() string {
+	if s.id != "" {
+		return s.id
+	}
+	return s.typ
+}
+
+func (a *App) notifierIDs() []string {
+	ids := make([]string, len(a.notifiers))
+	for i, slot := range a.notifiers {
+		ids[i] = slot.label()
+	}
+	return ids
+}
+
 // runPass runs one detection pass and optionally filters/saves notification state.
-// suppress reads state to skip already-notified targets; updateState writes state
-// after successful delivery. They are independent (SIGUSR2 sets both false).
+// Scheduled passes (suppress + updateState) plan delivery per notifier: a
+// notifier that failed keeps its updates for the next pass while the others
+// are not sent duplicates. check / SIGUSR2 send everything to every notifier
+// and leave state alone.
 func (a *App) runPass(ctx context.Context, store *state.Store, mode passMode) error {
 	updates, activeKeys, canPrune, err := a.engine.RunOnce(ctx)
 	if err != nil {
 		return err
 	}
 
-	toNotify := updates
-	suppressed := 0
-	if mode.suppress {
-		if store == nil {
-			return fmt.Errorf("suppress requested without state store")
+	if !mode.suppress {
+		if len(updates) > 0 {
+			a.notifyAll(ctx, updates)
 		}
-		var suppressedBatch []model.UpdateAvailable
-		toNotify, suppressedBatch = store.Filter(updates)
-		suppressed = len(suppressedBatch)
+		if mode.updateState {
+			if store == nil {
+				return fmt.Errorf("updateState requested without state store")
+			}
+			if err := store.Finish(activeKeys, canPrune); err != nil {
+				return fmt.Errorf("save state: %w", err)
+			}
+		}
+		return nil
 	}
 
-	notified := toNotify
-	if len(toNotify) > 0 {
-		if !a.notifyAll(ctx, toNotify) {
-			a.log.Info("notifications not delivered, state not updated", "updates", len(toNotify))
-			notified = nil
+	if store == nil {
+		return fmt.Errorf("suppress requested without state store")
+	}
+	store.SetNotifiers(a.notifierIDs())
+	plan := store.Plan(updates)
+	if plan.Reminders > 0 {
+		a.log.Info("reminders due", "reminders", plan.Reminders)
+	}
+	if plan.CatchUp > 0 {
+		a.log.Info("re-sending to notifiers that missed earlier updates", "pairs", plan.CatchUp)
+	}
+	if plan.Suppressed > 0 {
+		a.log.Info("notifications suppressed", "suppressed", plan.Suppressed)
+	}
+
+	failed := 0
+	for _, slot := range a.notifiers {
+		batch := plan.Batches[slot.label()]
+		if len(batch) == 0 {
+			continue
 		}
-	} else if suppressed > 0 {
-		a.log.Info("notifications suppressed", "suppressed", suppressed)
+		if !a.deliver(ctx, slot, batch) {
+			failed++
+			continue
+		}
+		if mode.updateState {
+			store.RecordDelivery(slot.label(), batch)
+		}
+	}
+	if failed > 0 {
+		a.log.Info("failed notifiers will retry next pass; delivered ones are not re-sent", "failed", failed)
 	}
 
 	if mode.updateState {
-		if store == nil {
-			return fmt.Errorf("updateState requested without state store")
-		}
-		if err := store.AfterPass(activeKeys, notified, canPrune); err != nil {
+		if err := store.Finish(activeKeys, canPrune); err != nil {
 			return fmt.Errorf("save state: %w", err)
 		}
 	}
-
 	return nil
+}
+
+func countReminders(batch []model.UpdateAvailable) int {
+	n := 0
+	for _, u := range batch {
+		if u.Reminder {
+			n++
+		}
+	}
+	return n
 }
 
 // Check runs a single stateless pass (no state read/write) and exits.
@@ -319,7 +405,11 @@ func (a *App) Run(ctx context.Context, cfg *config.Config, configPath, statePath
 	)
 
 	store := state.Load(statePath, a.log)
+	store.SetRemindAfter(cfg.RemindAfter.Duration)
 	a.log.Info("notification state loaded", "path", statePath, "entries", store.EntryCount())
+	if cfg.RemindAfter.Duration > 0 {
+		a.log.Info("remind_after enabled", "remind_after", formatAge(cfg.RemindAfter.Duration))
+	}
 
 	stampPath := health.ResolveStampPath(configPath, cfg.StateFile)
 	if err := health.Touch(configPath, cfg.StateFile); err != nil {

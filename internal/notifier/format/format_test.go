@@ -100,3 +100,32 @@ func TestUpdateEntryBumpOmitempty(t *testing.T) {
 		t.Fatalf("digest bump should be empty, got %q", digestEntry.Bump)
 	}
 }
+
+func TestChangeTextReminderSuffix(t *testing.T) {
+	semverReminder := ChangeText(model.UpdateAvailable{
+		CurrentTag: "2.8.1", LatestTag: "3.2.0", Bump: model.BumpMajor, Reminder: true,
+	}, false)
+	if semverReminder != "2.8.1 → 3.2.0 (major) (reminder)" {
+		t.Fatalf("got %q", semverReminder)
+	}
+	digestReminder := ChangeText(model.UpdateAvailable{
+		CurrentTag: "latest", LocalDigest: "sha256:aaaaaaaaaaaaaaaa", RemoteDigest: "sha256:bbbbbbbbbbbbbbbb", Reminder: true,
+	}, false)
+	if !strings.HasSuffix(digestReminder, " (reminder)") || !strings.HasPrefix(digestReminder, "digest changed: ") {
+		t.Fatalf("got %q", digestReminder)
+	}
+}
+
+func TestReminderFieldInTemplateAndJSON(t *testing.T) {
+	event := model.UpdateAvailable{CurrentTag: "1", LatestTag: "2", Reminder: true}
+	if !ItemFromEvent("prod", event, false).Reminder {
+		t.Fatal("ItemData.Reminder not set")
+	}
+	if !UpdateEntryFromEvent(event).Reminder {
+		t.Fatal("UpdateEntry.Reminder not set")
+	}
+	event.Reminder = false
+	if UpdateEntryFromEvent(event).Reminder {
+		t.Fatal("reminder must default to false")
+	}
+}

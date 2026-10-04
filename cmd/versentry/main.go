@@ -14,6 +14,7 @@ import (
 	"github.com/BlackRaincoat/versentry/internal/core"
 	"github.com/BlackRaincoat/versentry/internal/health"
 	"github.com/BlackRaincoat/versentry/internal/logging"
+	_ "github.com/BlackRaincoat/versentry/internal/notifier/apprise"
 	_ "github.com/BlackRaincoat/versentry/internal/notifier/discord"
 	_ "github.com/BlackRaincoat/versentry/internal/notifier/gotify"
 	_ "github.com/BlackRaincoat/versentry/internal/notifier/ntfy"
@@ -51,6 +52,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newCheckCmd(&configPath, &logLevel))
 	root.AddCommand(newRunCmd(&configPath, &logLevel))
 	root.AddCommand(newLinksCmd(&configPath, &logLevel))
+	root.AddCommand(newNotifyTestCmd(&configPath, &logLevel))
 	root.AddCommand(newHealthCmd(&configPath))
 	root.AddCommand(newVersionCmd())
 
@@ -132,6 +134,25 @@ func newLinksCmd(configPath, logLevel *string) *cobra.Command {
 				return err
 			}
 			return app.Links(cmd.Context(), cmd.OutOrStdout())
+		},
+	}
+}
+
+func newNotifyTestCmd(configPath, logLevel *string) *cobra.Command {
+	return &cobra.Command{
+		Use:          "notify-test",
+		Short:        "Send a sample notification through all configured notifiers (no Docker/registry calls, no state)",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+			app, err := loadApp(cfg, *logLevel)
+			if err != nil {
+				return err
+			}
+			return app.NotifyTest(cmd.Context())
 		},
 	}
 }

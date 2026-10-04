@@ -17,7 +17,8 @@ func TestForceCheckModeDoesNotUseStateStore(t *testing.T) {
 	path := filepath.Join(dir, "state.json")
 
 	s := state.Load(path, slog.Default())
-	s.Record([]model.UpdateAvailable{{
+	s.SetNotifiers([]string{"stdout"})
+	s.RecordDelivery("stdout", []model.UpdateAvailable{{
 		Host:      "index.docker.io",
 		Repo:      "library/nginx",
 		LatestTag: "1.27.2",

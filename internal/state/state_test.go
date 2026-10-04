@@ -20,7 +20,7 @@ func TestMissingFile(t *testing.T) {
 	}
 
 	s := Load(path, slog.Default())
-	s.Record([]model.UpdateAvailable{{
+	record(s, []model.UpdateAvailable{{
 		Container: model.Container{Name: "web"},
 		Host:      "index.docker.io",
 		Repo:      "library/nginx",
@@ -133,7 +133,7 @@ func TestFilterNotifiesOnTrackingModeChange(t *testing.T) {
 		LatestTag:  "v3.24.2-ce",
 	}
 
-	toNotify, suppressed := s.Filter([]model.UpdateAvailable{event})
+	toNotify, suppressed := filter(s, []model.UpdateAvailable{event})
 	if len(toNotify) != 1 {
 		t.Fatalf("expected notify on digest→semver mode change, got notify=%d suppressed=%d", len(toNotify), len(suppressed))
 	}
@@ -141,13 +141,13 @@ func TestFilterNotifiesOnTrackingModeChange(t *testing.T) {
 		t.Fatalf("expected 0 suppressed, got %d", len(suppressed))
 	}
 
-	s.Record(toNotify)
+	record(s, toNotify)
 	stored := s.data.Entries[key]
 	if stored.Mode != "semver" || stored.Value != "v3.24.2-ce" {
 		t.Fatalf("state after record: mode=%q value=%q, want semver/v3.24.2-ce", stored.Mode, stored.Value)
 	}
 
-	toNotify, suppressed = s.Filter([]model.UpdateAvailable{event})
+	toNotify, suppressed = filter(s, []model.UpdateAvailable{event})
 	if len(toNotify) != 0 || len(suppressed) != 1 {
 		t.Fatalf("after record: expected suppressed, got notify=%d suppressed=%d", len(toNotify), len(suppressed))
 	}
@@ -175,7 +175,7 @@ func TestFilterModeChangeIgnoresStoredValue(t *testing.T) {
 		LatestTag:  "3.24.2",
 	}
 
-	toNotify, _ := s.Filter([]model.UpdateAvailable{event})
+	toNotify, _ := filter(s, []model.UpdateAvailable{event})
 	if len(toNotify) != 1 {
 		t.Fatal("expected notify when mode differs even if stored digest value equals semver tag")
 	}
@@ -202,7 +202,7 @@ func TestFilterSuppressesKnownTarget(t *testing.T) {
 		LatestTag:  "1.27.2",
 	}
 
-	toNotify, suppressed := s.Filter([]model.UpdateAvailable{event})
+	toNotify, suppressed := filter(s, []model.UpdateAvailable{event})
 	if len(toNotify) != 0 {
 		t.Fatalf("expected 0 to notify, got %d", len(toNotify))
 	}
@@ -231,7 +231,7 @@ func TestFilterSameImageDifferentContainersIndependent(t *testing.T) {
 		CurrentTag: "17.1",
 		LatestTag:  "17.2",
 	}
-	toNotify, suppressed := s.Filter([]model.UpdateAvailable{other})
+	toNotify, suppressed := filter(s, []model.UpdateAvailable{other})
 	if len(toNotify) != 1 || len(suppressed) != 0 {
 		t.Fatalf("expected independent notify for second container, notify=%d suppressed=%d", len(toNotify), len(suppressed))
 	}
@@ -243,7 +243,7 @@ func TestFilterSameImageDifferentContainersIndependent(t *testing.T) {
 		CurrentTag: "16.3-alpine",
 		LatestTag:  "16.4-alpine",
 	}
-	toNotify, suppressed = s.Filter([]model.UpdateAvailable{same})
+	toNotify, suppressed = filter(s, []model.UpdateAvailable{same})
 	if len(toNotify) != 0 || len(suppressed) != 1 {
 		t.Fatalf("expected first container suppressed, notify=%d suppressed=%d", len(toNotify), len(suppressed))
 	}
@@ -270,7 +270,7 @@ func TestFilterNotifiesNewTarget(t *testing.T) {
 		LatestTag:  "1.27.3",
 	}
 
-	toNotify, suppressed := s.Filter([]model.UpdateAvailable{event})
+	toNotify, suppressed := filter(s, []model.UpdateAvailable{event})
 	if len(toNotify) != 1 {
 		t.Fatalf("expected 1 to notify, got %d", len(toNotify))
 	}
@@ -287,7 +287,7 @@ func TestPruneRemovesStaleEntries(t *testing.T) {
 	s.data.Entries["web|index.docker.io/library/nginx"] = EntryState{Mode: "semver", Value: "1.27.2"}
 	s.data.Entries["app|ghcr.io/org/app"] = EntryState{Mode: "semver", Value: "2.0.0"}
 
-	if err := s.AfterPass([]string{"web|index.docker.io/library/nginx"}, nil, true); err != nil {
+	if err := afterPass(s, []string{"web|index.docker.io/library/nginx"}, nil, true); err != nil {
 		t.Fatalf("AfterPass: %v", err)
 	}
 
@@ -308,7 +308,7 @@ func TestAfterPassSkipsPruneWhenCannotPrune(t *testing.T) {
 	s.data.Entries["web|index.docker.io/library/nginx"] = EntryState{Mode: "semver", Value: "1.27.2"}
 	s.data.Entries["app|ghcr.io/org/app"] = EntryState{Mode: "semver", Value: "2.0.0"}
 
-	if err := s.AfterPass(nil, nil, false); err != nil {
+	if err := afterPass(s, nil, nil, false); err != nil {
 		t.Fatalf("AfterPass: %v", err)
 	}
 
@@ -357,7 +357,7 @@ func TestAfterPassPrunesExcludedFleet(t *testing.T) {
 	s := Load(path, slog.Default())
 	s.data.Entries["web|index.docker.io/library/nginx"] = EntryState{Mode: "semver", Value: "1.27.2"}
 
-	if err := s.AfterPass(nil, nil, true); err != nil {
+	if err := afterPass(s, nil, nil, true); err != nil {
 		t.Fatalf("AfterPass: %v", err)
 	}
 
@@ -385,7 +385,7 @@ func TestSaveAtomic(t *testing.T) {
 	path := filepath.Join(dir, "nested", "state.json")
 
 	s := Load(path, slog.Default())
-	s.Record([]model.UpdateAvailable{{
+	record(s, []model.UpdateAvailable{{
 		Container: model.Container{Name: "web"},
 		Host:      "index.docker.io",
 		Repo:      "library/nginx",
@@ -424,7 +424,7 @@ func TestDigestModeState(t *testing.T) {
 		CurrentTag:   "latest",
 		RemoteDigest: "sha256:abc123",
 	}
-	toNotify, _ := s.Filter([]model.UpdateAvailable{same})
+	toNotify, _ := filter(s, []model.UpdateAvailable{same})
 	if len(toNotify) != 0 {
 		t.Fatal("expected digest match to be suppressed")
 	}
@@ -436,7 +436,7 @@ func TestDigestModeState(t *testing.T) {
 		CurrentTag:   "latest",
 		RemoteDigest: "sha256:def456",
 	}
-	toNotify, _ = s.Filter([]model.UpdateAvailable{changed})
+	toNotify, _ = filter(s, []model.UpdateAvailable{changed})
 	if len(toNotify) != 1 {
 		t.Fatal("expected changed digest to notify")
 	}

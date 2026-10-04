@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/BlackRaincoat/versentry/internal/config"
 	"github.com/BlackRaincoat/versentry/internal/imageref"
@@ -15,16 +16,24 @@ const (
 	labelInclude = "versentry.include"
 	labelTrack   = "versentry.track"
 	labelMode    = "versentry.mode" // deprecated alias for labelTrack
+	labelMinAge  = "versentry.min_age"
 )
 
 // RuleTrackDigest forces digest detection for an image/container.
 const RuleTrackDigest = "digest"
+
+// RuleTrackAuto (label only) restores default detection (semver → numeric →
+// digest) for one container, overriding a config rule's track: digest.
+const RuleTrackAuto = "auto"
 
 // Rule is a resolved rule for one image: optional include filter and/or track.
 type Rule struct {
 	Image   string
 	Include *regexp.Regexp // nil when unset (e.g. track-only digest rule)
 	Track   string         // "" or RuleTrackDigest
+	MinAge  *time.Duration // nil = global min_age; 0 = off for this image (config rules only)
+	// Overridden lists config-rule fields replaced by container labels (ChainRuleResolver).
+	Overridden []string
 }
 
 // RuleQuery is the input for rule resolution: image identity plus container labels.
@@ -64,10 +73,16 @@ func NewConfigRuleResolver(rules []config.RuleConfig, log *slog.Logger) (*Config
 			re = compiled
 		}
 		track := config.EffectiveRuleTrack(rc)
+		var minAge *time.Duration
+		if rc.MinAge != nil {
+			d := rc.MinAge.Duration
+			minAge = &d
+		}
 		byImage[rc.Image] = &Rule{
 			Image:   rc.Image,
 			Include: re,
 			Track:   track,
+			MinAge:  minAge,
 		}
 	}
 	return &ConfigRuleResolver{byImage: byImage}, nil
@@ -122,14 +137,16 @@ func (r *LabelRuleResolver) RuleFor(q RuleQuery) *Rule {
 	}
 
 	track := resolveLabelTrack(r.log, q, q.Labels[labelTrack], q.Labels[labelMode])
+	minAge := resolveLabelMinAge(r.log, q, q.Labels[labelMinAge])
 
-	if include == nil && track == "" {
+	if include == nil && track == "" && minAge == nil {
 		return nil
 	}
 	return &Rule{
 		Image:   q.Image,
 		Include: include,
 		Track:   track,
+		MinAge:  minAge,
 	}
 }
 
@@ -139,14 +156,14 @@ func resolveLabelTrack(log *slog.Logger, q RuleQuery, trackRaw, modeRaw string) 
 
 	track := ""
 	if trackRaw != "" {
-		if trackRaw != RuleTrackDigest {
+		if trackRaw != RuleTrackDigest && trackRaw != RuleTrackAuto {
 			log.Warn("invalid versentry.track label, ignoring",
 				"container", q.Container,
 				"image", q.Image,
 				"track", trackRaw,
 			)
 		} else {
-			track = RuleTrackDigest
+			track = trackRaw
 		}
 	}
 
@@ -175,27 +192,90 @@ func resolveLabelTrack(log *slog.Logger, q RuleQuery, trackRaw, modeRaw string) 
 	return RuleTrackDigest
 }
 
-// ChainRuleResolver tries sources in order; first non-nil rule wins.
+// effectiveTrack folds "" and "auto" (both default detection) together.
+func effectiveTrack(track string) string {
+	if track == RuleTrackDigest {
+		return RuleTrackDigest
+	}
+	return RuleTrackAuto
+}
+
+// resolveLabelMinAge parses versentry.min_age ("3d", "36h", "0" = off). Invalid
+// or negative values log WARN and are ignored (the config value, if any, applies).
+func resolveLabelMinAge(log *slog.Logger, q RuleQuery, raw string) *time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if raw == "0" {
+		zero := time.Duration(0)
+		return &zero
+	}
+	d, err := config.ParseDuration(raw)
+	if err != nil || d < 0 {
+		log.Warn("invalid versentry.min_age label, ignoring",
+			"container", q.Container,
+			"image", q.Image,
+			"min_age", raw,
+		)
+		return nil
+	}
+	return &d
+}
+
+// ChainRuleResolver merges rule sources field by field, in increasing priority:
+// a later source overrides each field it sets (include, track, min_age) and
+// inherits the rest. Versentry wires config rules first, container labels last,
+// so a label is a per-container override of the central image rule.
 type ChainRuleResolver struct {
 	sources []RuleResolver
 }
 
-// NewChainRuleResolver builds a priority chain of rule sources.
+// NewChainRuleResolver builds a merge chain; later sources win per field.
 func NewChainRuleResolver(sources ...RuleResolver) *ChainRuleResolver {
 	return &ChainRuleResolver{sources: sources}
 }
 
-// RuleFor returns the first non-nil rule from the chain.
+// RuleFor merges all non-nil rules for the query. Overridden lists the fields a
+// later source replaced on an earlier one (for a one-time INFO).
 func (c *ChainRuleResolver) RuleFor(q RuleQuery) *Rule {
+	var merged *Rule
 	for _, src := range c.sources {
 		if src == nil {
 			continue
 		}
-		if rule := src.RuleFor(q); rule != nil {
-			return rule
+		rule := src.RuleFor(q)
+		if rule == nil {
+			continue
+		}
+		if merged == nil {
+			cp := *rule
+			cp.Overridden = nil
+			merged = &cp
+			continue
+		}
+		if rule.Include != nil {
+			if merged.Include != nil {
+				merged.Overridden = append(merged.Overridden, "include")
+			}
+			merged.Include = rule.Include
+		}
+		if rule.Track != "" {
+			// Count it only when detection actually changes: "auto" is the default,
+			// so auto over a rule without track: digest changes nothing.
+			if effectiveTrack(merged.Track) != effectiveTrack(rule.Track) {
+				merged.Overridden = append(merged.Overridden, "track")
+			}
+			merged.Track = rule.Track
+		}
+		if rule.MinAge != nil {
+			if merged.MinAge != nil {
+				merged.Overridden = append(merged.Overridden, "min_age")
+			}
+			merged.MinAge = rule.MinAge
 		}
 	}
-	return nil
+	return merged
 }
 
 // filterTags keeps only tags that match the include regex.

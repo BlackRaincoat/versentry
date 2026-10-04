@@ -46,6 +46,7 @@ type Outcome struct {
 type Classifier func(status int, body []byte, retryAfterHeader string, netErr error) Outcome
 
 // Do executes attempt up to MaxAttempts times with exponential backoff and 429 Retry-After.
+// Network errors are passed through RedactURLError (scheme://host only) before classify.
 func Do(ctx context.Context, cfg Config, classify Classifier, attempt func(ctx context.Context) AttemptResult) error {
 	cfg = cfg.withDefaults()
 	var lastErr error
@@ -56,6 +57,8 @@ func Do(ctx context.Context, cfg Config, classify Classifier, attempt func(ctx c
 		}
 
 		res := attempt(ctx)
+		// Before classify: custom classifiers and the retry WARN below must never see the full URL.
+		res.Err = RedactURLError(res.Err)
 		out := classify(res.StatusCode, res.Body, res.RetryAfter, res.Err)
 		if out.Err == nil {
 			return nil

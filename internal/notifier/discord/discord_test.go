@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -276,4 +278,43 @@ func newTestNotifier(t *testing.T, mode, format string, color int) *Notifier {
 	d := n.(*Notifier)
 	d.instanceName = "prod"
 	return d
+}
+
+func TestNetworkErrorDoesNotLeakToken(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	var attempts atomic.Int32
+	n := newTestNotifier(t, modeDigest, formatEmbed, 0)
+	n.maxAttempts = 3
+	n.sleep = func(ctx context.Context, d time.Duration) error { return nil }
+	n.client = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			attempts.Add(1)
+			return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+		}),
+	}
+
+	err := n.Notify(context.Background(), []model.UpdateAvailable{
+		{Container: model.Container{Name: "a"}, CurrentTag: "1", LatestTag: "2"},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if attempts.Load() != 3 {
+		t.Fatalf("attempts = %d, want 3 (network error must stay retryable)", attempts.Load())
+	}
+	for _, s := range []string{err.Error(), buf.String()} {
+		if strings.Contains(s, "abcdefghijklmnopqrstuvwxyz") || strings.Contains(s, "/api/webhooks") {
+			t.Fatalf("leaked webhook path/token: %s", s)
+		}
+	}
+	if !strings.Contains(err.Error(), `"https://discord.com"`) || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("expected host and cause in error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "attempt failed, retrying") {
+		t.Fatalf("expected retry WARN in log: %s", buf.String())
+	}
 }

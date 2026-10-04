@@ -30,6 +30,8 @@ Credentials and notifier endpoints are often injected via **`VERSENTRY_*` enviro
 | `registries` | no | auto public hosts | Extra / private OCI registries — see [Registries](registries.md) |
 | `rules` | no | — | Per-image detection policy (`include` / `track`) — see [Rules](rules.md) |
 | `exclude_containers` | no | — | Exact container names to skip — see [Container scope](#container-scope-opt-out) |
+| `watch_by_default` | no | `true` | `false` = opt-in: check only `watch_containers` and containers labeled `versentry.watch=true` — see [Opt-in mode](#opt-in-mode-watch_by_default-false) |
+| `watch_containers` | no | — | Exact container names to check in opt-in mode — see [Opt-in mode](#opt-in-mode-watch_by_default-false) |
 | `instance_name` | no | see below | Name shown in notification headers |
 | `timeouts.provider` | no | `10s` | Docker API timeout |
 | `timeouts.registry` | no | `30s` | Overall ceiling per `ListTags` / `TagDigest`; dial/header hang budgets are separate — see [Registries](registries.md#per-pass-cache-and-rate-limits) |
@@ -39,6 +41,8 @@ Credentials and notifier endpoints are often injected via **`VERSENTRY_*` enviro
 | `state_file` | no | `{config-dir}/state.json` | Internal notification state for `versentry run` — override only for custom layouts |
 | `registry_proxy` | no | — | HTTP/SOCKS5 proxy for all registry API calls — see [Registries](registries.md) |
 | `health_max_age` | no | see below | Max age of health stamp for `versentry health` |
+| `min_age` | no | off | Notify only when the new image is at least this old in the registry — see [Minimum image age](#minimum-image-age-min_age) |
+| `remind_after` | no | off | `versentry run`: re-send an update you have not applied yet — see [Reminders](#reminders-remind_after) |
 | `log_level` | no | `info` | `debug` / `info` / `warn` / `error` |
 
 ### Example skeleton
@@ -104,8 +108,8 @@ Source of truth for **what to watch and how to detect updates** is the YAML conf
 
 | Concern | Precedence |
 |---------|------------|
-| Tag filters / `track` | config `rules[]` **wins over** `versentry.include` / `versentry.track` (whole rule; see [Rules](rules.md)) |
-| Opt-out | `exclude_containers` **OR** `versentry.watch=false` (both only exclude) |
+| Tag filters / `track` | config `rules[]` is the base; `versentry.include` / `versentry.track` on a container **override** it for that container, field by field (see [Rules](rules.md#two-sources-priority)) |
+| Opt-out | `exclude_containers` **OR** `versentry.watch=false` (both only exclude); with `watch_by_default: false`, only `watch_containers` **OR** `versentry.watch=true` is checked, and exclusion still wins |
 
 `VERSENTRY_*` does **not** participate here. Scheduling (`interval` / `schedule` / `timezone`), `rules`, `exclude_containers`, `timeouts`, notifier `mode` / templates, and similar policy knobs live in the config file only.
 
@@ -133,6 +137,12 @@ Unset or empty env leaves the YAML value as-is. All Versentry-specific variables
 | `VERSENTRY_NTFY_TOPIC` | `topic` on the `ntfy` notifier |
 | `VERSENTRY_NTFY_TOKEN` | `token` on the `ntfy` notifier (optional Bearer) |
 | `VERSENTRY_NTFY_PROXY` | `proxy` on the `ntfy` notifier |
+| `VERSENTRY_APPRISE_URL` | `url` on the `apprise` notifier |
+| `VERSENTRY_APPRISE_KEY` | `key` on the `apprise` notifier (drops YAML `urls`) |
+| `VERSENTRY_APPRISE_URLS` | `urls` on the `apprise` notifier (drops YAML `key` / `tag`) |
+| `VERSENTRY_APPRISE_USERNAME` | `username` on the `apprise` notifier |
+| `VERSENTRY_APPRISE_PASSWORD` | `password` on the `apprise` notifier |
+| `VERSENTRY_APPRISE_PROXY` | `proxy` on the `apprise` notifier |
 | `VERSENTRY_REGISTRY_USERNAME` | `username` on every configured `oci` registry |
 | `VERSENTRY_REGISTRY_TOKEN` | `token` on every configured `oci` registry |
 | `VERSENTRY_REGISTRY_PROXY` | `registry_proxy` (HTTP or `socks5://` for all registries) |
@@ -161,6 +171,41 @@ volumes:
 
 **Where it appears:** **simple** mode uses the same layout as digest — instance on its own line (`📦 prod-docker-01`), then the container update on the next line(s). **Digest** with multiple updates keeps one instance header for the whole batch (`📦 prod-docker-01 — N updates`). Registry host (`index.docker.io`, …) is a separate field and is not in default Telegram/Discord templates.
 
+## Minimum image age (`min_age`)
+
+Delay notifications until the new image has been in the registry for a while — a guard against broken releases that get re-pushed or yanked within the first day.
+
+```yaml
+min_age: 3d          # global; 0 or unset = off
+
+rules:
+  - image: "grafana/grafana"
+    min_age: 7d      # stricter for one image
+  - image: "myorg/nightly"
+    min_age: 0       # off for a tag rebuilt every night (see below)
+```
+
+**Durations** everywhere in the config (`interval`, `timeouts.*`, `min_age`, …) accept a leading day count: `3d`, `1d12h`, alongside Go units (`36h`, `90m`).
+
+**Age** is the `created` time of the image in the registry (config blob; for a multi-arch index, the child for this host's platform). Versentry fetches it only for a **found update**, never for up-to-date containers.
+
+| Path | Too young |
+|------|-----------|
+| Semver / numeric | Try the next older newer-than-current version (up to 5 lookups per container per pass). The newest one that is old enough is notified — `1.4.0 → 1.4.2` while `1.4.3` is 1 day old. If none qualifies: **pending**. |
+| Digest | The tag's current image is the only candidate: **pending** until it is old enough. |
+
+**Pending** means: no notification and **no state write** — the container is re-checked every pass and notified once the candidate is old enough. Logged at INFO as `update pending … reason="1.4.3 is 1d4h old, min_age 3d"`; `check complete` counts `pending=N`. Applies to `versentry check` too.
+
+**Unknown age** (no timestamp, or `created` zeroed to 1970 by reproducible builds) is **not** delayed — min_age holds back only images the registry proves young (DEBUG `min_age: image has no build timestamp`).
+
+**Registry errors** during the age lookup (timeout, 429, 5xx) skip the container for this pass, like any other registry failure.
+
+**Cost:** each lookup is one manifest `GET` (index + platform manifest), which Docker Hub counts as **one pull** against the same per-IP limit as your `docker pull`, plus a config blob (not counted). Only containers with an update pay it.
+
+**Frequently rebuilt tags:** a digest-tracked tag rebuilt more often than `min_age` (nightly `latest`) never gets old enough, so it would stay pending forever. Set `min_age: 0` on that image's rule.
+
+**Per-image rules:** `rules[].min_age` overrides the global value (`0` turns it off). For one container, the label `versentry.min_age` (`3d`, `36h`, `0` = off) overrides both; `versentry.include` / `versentry.track` override a rule's `include` / `track` and inherit its `min_age` — see [Rules](rules.md#two-sources-priority).
+
 ## Addressing axes (image vs container)
 
 Versentry has **two independent addressing axes** in config:
@@ -168,15 +213,15 @@ Versentry has **two independent addressing axes** in config:
 | Axis | Config | Addresses | Purpose |
 |------|--------|-----------|---------|
 | **Image** | `rules[]` | repository path (`postgres`, `chatwoot/chatwoot`, …) | Detection: which tags / digest vs semver |
-| **Container** | `exclude_containers` | exact Docker container name (as in `docker ps`) | Opt-out: do not monitor that container |
+| **Container** | `exclude_containers`, `watch_containers` | exact Docker container name (as in `docker ps`) | Opt-out: do not monitor that container; opt-in mode: monitor only these (with `watch_by_default: false`) |
 
 Labels (`versentry.*`) remain available as a per-container escape hatch. Detection and opt-out precedence are under [Fleet policy](#1-fleet-policy-config--labels) — env injection does not apply there.
 
-**Known asymmetry (detection):** a config `rules[]` entry for an image applies to **every** running container of that image and **ignores** `versentry.include` / `versentry.track` on those containers. You cannot give two `postgres` containers different include/track via labels once an image rule exists. Exclude **one** of those containers with `exclude_containers` (or `versentry.watch=false`). Per-container include/track in config is not implemented (YAGNI).
+**Per-container exceptions (detection):** a config `rules[]` entry applies to **every** running container of that image; a container that needs a different line sets `versentry.include` / `versentry.track` labels, which override the config rule for that container only (field by field). Per-container rules in config itself are not implemented (YAGNI).
 
 ## Container scope (opt-out)
 
-By default **all running containers** are checked. Opt out by name in config and/or with the label `versentry.watch=false`. Both sources only **exclude**; there is no config switch to force-monitor a labeled container.
+By default **all running containers** are checked. Opt out by name in config and/or with the label `versentry.watch=false`. Both sources only **exclude**; there is no config switch to force-monitor a labeled container. To check only selected containers instead, see [Opt-in mode](#opt-in-mode-watch_by_default-false).
 
 ### Config `exclude_containers`
 
@@ -202,6 +247,8 @@ Works independently of `exclude_containers` (WUD migration: `wud.watch` → `ver
 
 Invalid values (`yes`, `on`, …) log **WARN** and are treated as absent (monitored), unless the name is also in `exclude_containers`.
 
+Only a `versentry.watch` label set on the container (Compose / `docker run`) counts; the same label baked into an image by its publisher is ignored — see [Rules](rules.md#two-sources-priority).
+
 ### Combined rule
 
 A container is **excluded** if it is listed in `exclude_containers` **or** has `versentry.watch=false`. Otherwise it is monitored.
@@ -223,6 +270,41 @@ services:
       versentry.watch: "false"
 ```
 
+### Opt-in mode (`watch_by_default: false`)
+
+On a host where only a few of many containers matter, flip the default: only selected containers are checked; everything else is ignored, including containers started later. Select them centrally by name, with a label on the service, or both:
+
+```yaml
+watch_by_default: false
+watch_containers:        # central list (exact names, like exclude_containers)
+  - postgres
+  - nextcloud
+```
+
+```yaml
+# …or from the app's own Compose file
+services:
+  immich-server:
+    labels:
+      versentry.watch: "true"
+```
+
+| Container | `watch_by_default: true` (default) | `watch_by_default: false` |
+|-----------|-------------------------------------|---------------------------|
+| no label, not listed | monitored | **ignored** |
+| in `watch_containers` | monitored | monitored |
+| `versentry.watch=true` | monitored | monitored |
+| `versentry.watch=false` | excluded | excluded (even if listed) |
+| in `exclude_containers` | excluded | excluded (even if labeled `true`) |
+| invalid label (`yes`, …) | WARN, as if absent | WARN, as if absent |
+
+- **Exclusion always wins:** `exclude_containers` or `versentry.watch=false` beats `watch_containers` and `versentry.watch=true`. A name in both `watch_containers` and `exclude_containers` is a config error.
+- `watch_containers` names follow the `exclude_containers` rules: exact Docker names, empty entry = config error, duplicates WARN, a name not among running containers WARNs each pass.
+- `watch_containers` with the default `watch_by_default: true` has no effect (startup WARN): every container is already checked.
+- Nothing selected → **WARN** each pass (`nothing to check`).
+- Startup log: `watch_by_default is false: only watch_containers and containers labeled versentry.watch=true are checked`. `versentry links` lists only selected containers.
+- **Switching an existing install:** containers that are no longer watched leave the active fleet, so their state entries are pruned on the next pass (same as excluding them). Selecting one later may re-notify an update it already had.
+
 ## Notification state (`versentry run`)
 
 `versentry run` keeps a JSON state file to avoid sending the same update repeatedly. `versentry check` is always stateless.
@@ -230,7 +312,7 @@ services:
 | Mode | Reads state | Writes state | Notifies |
 |------|-------------|--------------|----------|
 | `check` | no | no | all updates found |
-| `run` (scheduled / SIGUSR1) | yes | yes (after successful delivery) | only new updates |
+| `run` (scheduled / SIGUSR1) | yes | yes (after successful delivery) | only new updates (+ due [reminders](#reminders-remind_after)) |
 | `run` (SIGUSR2 force-check) | no | no | all updates found (like `check`) |
 
 State key: `{container_name}|{registry-host}/{repo}` (e.g. `web|index.docker.io/library/nginx`). Suppression is **per container**, so two containers on the same image (different tag lines or twin instances) keep independent history. Value: last notified target — semver `LatestTag` or normalized remote digest. JSON map field: `entries` (state file `version` 2).
@@ -244,7 +326,21 @@ Registry API dedup within a pass remains **per image** (`host/repo`) — that is
 - Empty container list after successful list → prune skipped (transient glitch protection).
 - `ListRunning` error → state not touched.
 - Tracking mode change (digest ↔ semver) → treated as a new target (may notify once).
-- State is saved only after **all** notifiers succeed. Atomic write: temp file + rename.
+- Delivery is tracked **per notifier**: if one notifier fails, only that notifier gets the update again on the next pass; notifiers that already delivered it are not sent a duplicate. A notifier added to the config later receives the currently pending updates once. Atomic write: temp file + rename.
+
+### Reminders (`remind_after`)
+
+By default each target is notified **once**: if you do not update, Versentry stays silent until an even newer version appears. With `remind_after`, an update that is still pending is sent again once its last notification is at least that old:
+
+```yaml
+remind_after: 7d    # 0 or unset = off (notify once)
+```
+
+- The repeat is marked: default change text ends with ` (reminder)` (`1.27.1 → 1.27.2 (reminder)`); templates get `{{.Reminder}}`, the webhook JSON `"reminder": true`, `stdout` logs `reminder=true`. INFO `reminders due reminders=N` in the pass log.
+- After a reminder is delivered the clock restarts: next reminder another `remind_after` later, until you update or a newer target replaces it (that is a normal notification, not a reminder).
+- Uses the `notified_at` already stored in the state file — no state format change. Enabling it on an existing install sends one round of reminders on the first scheduled pass for every update older than `remind_after`.
+- Only scheduled passes and `SIGUSR1` (they read state). `check` and `SIGUSR2` notify everything anyway and never mark reminders.
+- Reminders are timed per notifier; a notifier whose delivery failed gets the update on the next pass (as a catch-up, not a reminder).
 
 **Docker:** mount a volume at `/data`. The image sets `VERSENTRY_STATE_FILE=/data/state.json` — you do not need `state_file` in YAML unless you use a non-standard layout:
 
@@ -312,7 +408,16 @@ See [Deployment](deployment.md) for Docker HEALTHCHECK.
 
 ## Notifier failures
 
-A notifier failure (e.g. bad Telegram token) logs **ERROR** but **does not stop** `versentry run` — the next scheduled check still runs. Notification state is updated only after **all** notifiers succeed for that pass.
+A notifier failure (e.g. bad Telegram token) logs **ERROR** but **does not stop** `versentry run` — the next scheduled check still runs. State is tracked per notifier: the failed notifier gets the update again on the next scheduled pass (INFO `re-sending to notifiers that missed earlier updates`), while notifiers that delivered it are not sent a duplicate.
+
+**Notifier names.** Each notifier has an ID used in logs and in that per-notifier state: by default its `type` (`telegram`), and `telegram#2`, `telegram#3`, … for further notifiers of the same type. Set `name:` to choose one — recommended when you have several notifiers of one type, so reordering them does not mix up their history:
+
+```yaml
+notifiers:
+  - type: telegram
+    name: family        # optional, unique
+    config: { … }
+```
 
 ## How checks work
 

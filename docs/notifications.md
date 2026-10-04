@@ -17,6 +17,7 @@ Each notifier has its own config block and defaults. Templates are **not** share
 | `webhook` | `digest` | single `template` = full HTTP body (optional) |
 | `gotify` | `digest` | `item_template` + `digest_template` (markdown) |
 | `ntfy` | `digest` | `item_template` + `digest_template` (markdown) |
+| `apprise` | `digest` | `item_template` + `digest_template` (markdown) |
 | `stdout` | — | none (fixed log lines) |
 
 **Why two template shapes?** Telegram, Gotify, and ntfy send a string body (`text` / `message`); other fields are fixed by code (`chat_id`, `parse_mode`, Gotify/ntfy `title`/`priority`, ntfy `tags`/`click`). Templates only shape that text — `item_template` lines are concatenated, and `digest_template` wraps the batch. Discord and webhook emit the **entire** JSON body from one `template`: Discord’s content lives in `embeds` (no separate message string), and webhook is whatever shape a third-party API expects, so you iterate `{{.Updates}}` inside that one template instead of splitting item/digest.
@@ -68,7 +69,7 @@ Generic HTTP POST (custom hooks). Shared HTTP retry helper with Telegram. Logs o
 
 Set `url`, `Authorization`, and `proxy` via env (`VERSENTRY_WEBHOOK_URL`, `VERSENTRY_WEBHOOK_AUTHORIZATION`, `VERSENTRY_WEBHOOK_PROXY`) or YAML — see [Configuration — environment variables](configuration.md#environment-variables).
 
-**Default JSON payload** (no `template`): envelope with `instance`, `count`, and `updates[]`. Each update has `container`, `image`, `host`, `current_tag`, `latest_tag`, `change`, `url`, `mode` (`semver` or `digest`), and optional `bump` (`major`/`minor`/`patch` when applicable). In `simple` mode the same envelope is sent with `count: 1`.
+**Default JSON payload** (no `template`): envelope with `instance`, `count`, and `updates[]`. Each update has `container`, `image`, `host`, `current_tag`, `latest_tag`, `change`, `url`, `mode` (`semver` or `digest`), optional `bump` (`major`/`minor`/`patch` when applicable), and `reminder: true` on [`remind_after`](configuration.md#reminders-remind_after) repeats. In `simple` mode the same envelope is sent with `count: 1`.
 
 **Custom `template`:** `simple` mode receives one update as `ItemData`. `digest` mode receives the full payload struct (`Instance`, `Count`, `Updates` slice). Default `Content-Type` is `application/json`; override via `headers`.
 
@@ -203,6 +204,75 @@ notifiers:
       # digest_template: "{{.Items}}"
 ```
 
+## apprise
+
+Send through an [Apprise API](https://github.com/caronc/apprise-api) server, which fans the message out to whatever it is configured for — email, Slack, Pushover, Matrix, Microsoft Teams, Home Assistant, Signal and 100+ other services ([list](https://github.com/caronc/apprise/wiki)). Use it for channels Versentry has no native notifier for.
+
+Apprise API is a **separate service you run yourself** (container `caronc/apprise`, ~120 MB) on the same host or anywhere Versentry can reach over the network. Versentry only sends it an HTTP request; the Versentry image does not change. Not needed if Telegram / Discord / Gotify / ntfy / webhook already cover you.
+
+```yaml
+# docker-compose.yml (next to versentry)
+services:
+  apprise:
+    image: caronc/apprise:latest
+    volumes:
+      - ./apprise-config:/config
+```
+
+**Two ways to address destinations:**
+
+| | Stateful (`key`, recommended) | Stateless (`urls`) |
+|--|-------------------------------|--------------------|
+| Where destinations live | Saved in apprise-api under a key (web UI or `POST /add/{key}`) | In Versentry config / env, sent with every message |
+| Secrets (mail password, tokens) | Stay in apprise-api | In Versentry config / env |
+| Request | `POST {url}/notify/{key}` | `POST {url}/notify` with `urls` |
+| Tags | `tag` selects a group of saved URLs | not available |
+
+**Tags (stateful):** without `tag`, apprise-api notifies only the saved URLs that have **no** tag. Set `tag: all` to reach every saved URL, or a tag name (`updates`) for a group.
+
+Set `url`, `key` or `urls`, optional `username` / `password` and `proxy` via env (`VERSENTRY_APPRISE_URL`, `VERSENTRY_APPRISE_KEY`, `VERSENTRY_APPRISE_URLS`, `VERSENTRY_APPRISE_USERNAME`, `VERSENTRY_APPRISE_PASSWORD`, `VERSENTRY_APPRISE_PROXY`) or YAML. An env `key` replaces YAML `urls` and vice versa. Logs show only the apprise-api **host**, never the key, URLs, or password.
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `url` | yes | — | apprise-api base (`http://apprise:8000`); a path prefix behind a reverse proxy is kept |
+| `key` | one of `key` / `urls` | — | Saved configuration key (stateful) |
+| `urls` | one of `key` / `urls` | — | Apprise URLs, string (`"mailto://…, pover://…"`) or list (stateless) |
+| `tag` | no | — | Stateful only: `all`, or a tag name |
+| `username` / `password` | no | — | Basic Auth when apprise-api runs with `APPRISE_AUTH_REQUIRED=yes` (password alone is allowed) |
+| `mode` | no | `digest` | `simple` (one message per update) or `digest` (one per pass) |
+| `item_template` | no | built-in | Go `text/template` for one update (markdown) |
+| `digest_template` | no | built-in | Wrapper for a batch of items |
+| `proxy` | no | — | Optional `socks5://…` or `http://…` |
+| `timeout` | no | `10s` | HTTP timeout per attempt |
+| `retries` | no | `3` | HTTP attempts per POST |
+| `retry_delay` | no | `1s` | Initial backoff between retries |
+
+**Message:** body is markdown (`"format": "markdown"`) — Apprise converts it per destination (HTML mail, plain SMS, …). Title is `<instance>: update available` / `<instance>: N updates available`. Type is `warning` when the batch has a major bump or a [reminder](configuration.md#reminders-remind_after), else `info` (some destinations style or prioritise by type). Templates and markdown escaping match ntfy/Gotify; default templates are the same.
+
+**Delivery results:**
+
+| apprise-api response | Versentry |
+|----------------------|-----------|
+| `200` | delivered |
+| `424` (at least one destination failed, or no saved URL matched the tag) | **counted as delivered**, WARN `apprise: some destinations failed (HTTP 424)` with the server's message — check apprise-api logs |
+| network error, timeout, `5xx` | failed → retried, then the update is re-sent next pass (nothing was delivered, so no duplicates) |
+| `401`, `404`, `400` | failed, not retried (config error: credentials, unknown key, bad payload) |
+
+`424` is not retried on purpose: apprise-api already delivered to the destinations that work, and re-sending would duplicate the message on all of them every pass until the broken one is fixed.
+
+```yaml
+notifiers:
+  - type: apprise
+    config:
+      url: "http://apprise:8000"
+      key: "versentry"        # URLs saved in apprise-api under this key
+      tag: "all"              # or a tag name; omit = untagged URLs only
+      # urls: ["mailto://user:pass@gmail.com", "pover://user@token"]  # stateless instead of key
+      # username: "versentry"
+      # password: "secret"
+      # mode: digest
+```
+
 ## discord
 
 First-class Discord webhook notifier (rich embeds by default). Create a webhook in Discord: **Server Settings → Integrations → Webhooks → New Webhook**. The URL contains a secret token — it is never logged (only `discord.com` host in logs).
@@ -295,12 +365,12 @@ notifiers:
         {"embeds":[{"title":"📦 {{.Instance}}","description":"{{.Count}} update(s) — see logs for details","color":3447003}]}
 ```
 
-## Modes (telegram, webhook, discord, gotify, ntfy)
+## Modes (telegram, webhook, discord, gotify, ntfy, apprise)
 
 | `mode` | Behavior |
 |--------|----------|
 | `simple` | One delivery per update |
-| `digest` | One summary for the whole pass (default for telegram, discord, webhook, gotify, ntfy) |
+| `digest` | One summary for the whole pass (default for telegram, discord, webhook, gotify, ntfy, apprise) |
 
 ## Notification URLs
 
@@ -339,6 +409,7 @@ Shared field builders live in `internal/notifier/format` (`ItemData`, `Payload`)
 | `{{.LatestTag}}` | Newer tag (empty for digest-only updates) |
 | `{{.Host}}` | Registry host |
 | `{{.Bump}}` | `major` / `minor` / `patch` for tag updates; empty for digest. Optional — old templates that omit it keep working. Default text only appends ` (major)` to `Change` for cross-major. |
+| `{{.Reminder}}` | `true` when this is a [`remind_after`](configuration.md#reminders-remind_after) repeat of an already-notified update. Default `Change` text already ends with ` (reminder)`. |
 
 ### Digest wrapper (telegram / gotify / ntfy `digest_template`)
 

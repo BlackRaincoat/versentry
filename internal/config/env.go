@@ -22,6 +22,12 @@ const (
 	envNtfyTopic            = "VERSENTRY_NTFY_TOPIC"
 	envNtfyToken            = "VERSENTRY_NTFY_TOKEN"
 	envNtfyProxy            = "VERSENTRY_NTFY_PROXY"
+	envAppriseURL           = "VERSENTRY_APPRISE_URL"
+	envAppriseKey           = "VERSENTRY_APPRISE_KEY"
+	envAppriseURLs          = "VERSENTRY_APPRISE_URLS"
+	envAppriseUsername      = "VERSENTRY_APPRISE_USERNAME"
+	envApprisePassword      = "VERSENTRY_APPRISE_PASSWORD"
+	envAppriseProxy         = "VERSENTRY_APPRISE_PROXY"
 	envInstanceName         = "VERSENTRY_INSTANCE_NAME"
 	envRegistryProxy        = "VERSENTRY_REGISTRY_PROXY"
 	envRegistryUsername     = "VERSENTRY_REGISTRY_USERNAME"
@@ -45,6 +51,7 @@ func ApplyEnvOverrides(cfg *Config) {
 	applyWebhookEnv(cfg)
 	applyGotifyEnv(cfg)
 	applyNtfyEnv(cfg)
+	applyAppriseEnv(cfg)
 }
 
 func applyInstanceNameEnv(cfg *Config) {
@@ -234,4 +241,50 @@ func (cfg *Config) ScheduleLocation() (*time.Location, error) {
 		return nil, fmt.Errorf("invalid timezone %q: %w", name, err)
 	}
 	return loc, nil
+}
+
+// applyAppriseEnv overrides apprise notifier fields. Key and urls are mutually
+// exclusive: an env key drops YAML urls and vice versa (both in env → the
+// notifier rejects the config at startup).
+func applyAppriseEnv(cfg *Config) {
+	vals := map[string]string{
+		"url":      strings.TrimSpace(os.Getenv(envAppriseURL)),
+		"key":      strings.TrimSpace(os.Getenv(envAppriseKey)),
+		"urls":     strings.TrimSpace(os.Getenv(envAppriseURLs)),
+		"username": strings.TrimSpace(os.Getenv(envAppriseUsername)),
+		"password": strings.TrimSpace(os.Getenv(envApprisePassword)),
+		"proxy":    strings.TrimSpace(os.Getenv(envAppriseProxy)),
+	}
+	set := false
+	for _, v := range vals {
+		if v != "" {
+			set = true
+			break
+		}
+	}
+	if !set {
+		return
+	}
+
+	for i := range cfg.Notifiers {
+		if cfg.Notifiers[i].Type != "apprise" {
+			continue
+		}
+		if cfg.Notifiers[i].Config == nil {
+			cfg.Notifiers[i].Config = make(map[string]any)
+		}
+		c := cfg.Notifiers[i].Config
+		if vals["key"] != "" && vals["urls"] == "" {
+			delete(c, "urls")
+		}
+		if vals["urls"] != "" && vals["key"] == "" {
+			delete(c, "key")
+			delete(c, "tag")
+		}
+		for k, v := range vals {
+			if v != "" {
+				c[k] = v
+			}
+		}
+	}
 }

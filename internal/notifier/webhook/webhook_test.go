@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/BlackRaincoat/versentry/internal/model"
 )
@@ -209,4 +212,42 @@ func newTestNotifier(t *testing.T, url, mode, tmpl string) *Notifier {
 	wh := n.(*Notifier)
 	wh.instanceName = "prod"
 	return wh
+}
+
+func TestNetworkErrorDoesNotLeakURLSecrets(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	var attempts atomic.Int32
+	n := newTestNotifier(t, "https://hooks.example.com/services/T000/B000/XXXSECRET?token=abc", modeDigest, "")
+	n.maxAttempts = 3
+	n.sleep = func(ctx context.Context, d time.Duration) error { return nil }
+	n.client = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			attempts.Add(1)
+			return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+		}),
+	}
+
+	err := n.Notify(context.Background(), []model.UpdateAvailable{
+		{Container: model.Container{Name: "a"}, CurrentTag: "1", LatestTag: "2"},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if attempts.Load() != 3 {
+		t.Fatalf("attempts = %d, want 3 (network error must stay retryable)", attempts.Load())
+	}
+	for _, s := range []string{err.Error(), buf.String()} {
+		for _, secret := range []string{"/services", "XXXSECRET", "token=abc"} {
+			if strings.Contains(s, secret) {
+				t.Fatalf("leaked %q: %s", secret, s)
+			}
+		}
+	}
+	if !strings.Contains(err.Error(), `"https://hooks.example.com"`) || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("expected host and cause in error: %v", err)
+	}
 }

@@ -326,3 +326,61 @@ func TestNotFoundCached(t *testing.T) {
 		t.Fatalf("calls = %d, want 1", calls.Load())
 	}
 }
+
+type agedMockRegistry struct {
+	mockRegistry
+	createdCalls atomic.Int32
+	createdFn    func(ctx context.Context, repo, tag string) (time.Time, error)
+}
+
+func (m *agedMockRegistry) ImageCreated(ctx context.Context, repo, tag string) (time.Time, error) {
+	m.createdCalls.Add(1)
+	return m.createdFn(ctx, repo, tag)
+}
+
+func TestImageCreatedCachedPerTag(t *testing.T) {
+	built := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	reg := &agedMockRegistry{
+		mockRegistry: mockRegistry{host: "index.docker.io"},
+		createdFn: func(ctx context.Context, repo, tag string) (time.Time, error) {
+			return built, nil
+		},
+	}
+	p := New(nil)
+	for i := 0; i < 3; i++ {
+		got, err := p.ImageCreated(context.Background(), reg, "index.docker.io", "library/nginx", "1.27.3")
+		if err != nil || !got.Equal(built) {
+			t.Fatalf("got %v, %v", got, err)
+		}
+	}
+	if _, err := p.ImageCreated(context.Background(), reg, "index.docker.io", "library/nginx", "1.27.4"); err != nil {
+		t.Fatal(err)
+	}
+	if n := reg.createdCalls.Load(); n != 2 {
+		t.Fatalf("ImageCreated calls = %d, want 2 (one per tag)", n)
+	}
+}
+
+func TestImageCreatedWithoutReaderIsUnknown(t *testing.T) {
+	got, err := New(nil).ImageCreated(context.Background(), &mockRegistry{host: "h"}, "h", "r", "t")
+	if err != nil || !got.IsZero() {
+		t.Fatalf("got %v, %v; want zero time, nil", got, err)
+	}
+}
+
+func TestImageCreatedSkipsRateLimitedHost(t *testing.T) {
+	reg := &agedMockRegistry{
+		mockRegistry: mockRegistry{host: "h"},
+		createdFn: func(ctx context.Context, repo, tag string) (time.Time, error) {
+			return time.Time{}, nil
+		},
+	}
+	p := New(nil)
+	p.markRateLimited("h")
+	if _, err := p.ImageCreated(context.Background(), reg, "h", "r", "t"); !errors.Is(err, registry.ErrRateLimited) {
+		t.Fatalf("err = %v, want ErrRateLimited", err)
+	}
+	if reg.createdCalls.Load() != 0 {
+		t.Fatal("rate-limited host must not be called")
+	}
+}

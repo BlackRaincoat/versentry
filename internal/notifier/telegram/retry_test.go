@@ -1,11 +1,16 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -173,3 +178,37 @@ func TestOptionalIntRetries(t *testing.T) {
 		t.Fatal("expected error for negative retries")
 	}
 }
+
+func TestSendMessageWithRetryNetworkErrorDoesNotLeakToken(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	var calls atomic.Int32
+	n := testHTTPNotifier(t, "https://api.telegram.org", 2, time.Millisecond)
+	n.client = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			calls.Add(1)
+			return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+		}),
+	}
+
+	err := n.sendMessageWithRetry(context.Background(), "hi")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("calls = %d, want 2", got)
+	}
+	// Retry WARN is logged inside httpretry.Do, before telegram's redactErr runs.
+	for _, s := range []string{err.Error(), buf.String()} {
+		if strings.Contains(s, "TESTTOKEN") || strings.Contains(s, "sendMessage") {
+			t.Fatalf("leaked token/path: %s", s)
+		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

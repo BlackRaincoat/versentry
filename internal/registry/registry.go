@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 var (
@@ -18,6 +19,13 @@ type Registry interface {
 	Host() string
 	TagDigest(ctx context.Context, repo, tag string) (digest string, err error)
 	ListTags(ctx context.Context, repo string) ([]string, error)
+}
+
+// ImageCreatedReader is optionally implemented by registries that can report
+// when the image behind repo:tag was built (config blob "created"). Used by
+// min_age. A zero time means the registry had no usable timestamp.
+type ImageCreatedReader interface {
+	ImageCreated(ctx context.Context, repo, tag string) (time.Time, error)
 }
 
 // Factory constructs a Registry from plugin-specific configuration.

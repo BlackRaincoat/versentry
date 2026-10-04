@@ -251,3 +251,37 @@ func TestApplyEnvOverridesStateFile(t *testing.T) {
 		t.Fatalf("got %q", cfg.StateFile)
 	}
 }
+
+func TestApplyAppriseEnv(t *testing.T) {
+	cfg := &Config{Notifiers: []PluginConfig{
+		{Type: "apprise", Config: map[string]any{"url": "http://yaml:8000", "urls": "mailto://yaml", "mode": "digest"}},
+		{Type: "ntfy", Config: map[string]any{"url": "http://ntfy"}},
+	}}
+	t.Setenv(envAppriseURL, "http://apprise:8000")
+	t.Setenv(envAppriseKey, "versentry")
+	t.Setenv(envApprisePassword, "s3cret")
+	ApplyEnvOverrides(cfg)
+
+	got := cfg.Notifiers[0].Config
+	if got["url"] != "http://apprise:8000" || got["key"] != "versentry" || got["password"] != "s3cret" || got["mode"] != "digest" {
+		t.Fatalf("apprise config = %v", got)
+	}
+	if _, ok := got["urls"]; ok {
+		t.Fatalf("env key must drop YAML urls (mutually exclusive): %v", got)
+	}
+	if cfg.Notifiers[1].Config["url"] != "http://ntfy" {
+		t.Fatalf("other notifiers untouched: %v", cfg.Notifiers[1].Config)
+	}
+}
+
+func TestApplyAppriseEnvURLsDropsKeyAndTag(t *testing.T) {
+	cfg := &Config{Notifiers: []PluginConfig{
+		{Type: "apprise", Config: map[string]any{"url": "http://a", "key": "k", "tag": "updates"}},
+	}}
+	t.Setenv(envAppriseURLs, "pover://user@token")
+	ApplyEnvOverrides(cfg)
+	got := cfg.Notifiers[0].Config
+	if got["urls"] != "pover://user@token" || got["key"] != nil || got["tag"] != nil {
+		t.Fatalf("apprise config = %v", got)
+	}
+}

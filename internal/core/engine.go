@@ -19,6 +19,7 @@ import (
 	"github.com/BlackRaincoat/versentry/internal/provider"
 	"github.com/BlackRaincoat/versentry/internal/registry"
 	"github.com/BlackRaincoat/versentry/internal/state"
+	"github.com/Masterminds/semver/v3"
 )
 
 type checkStatus string
@@ -27,6 +28,7 @@ const (
 	statusUpToDate checkStatus = "up-to-date"
 	statusUpdate   checkStatus = "update"
 	statusSkipped  checkStatus = "skipped"
+	statusPending  checkStatus = "pending" // update exists but the candidate is younger than min_age
 )
 
 type containerResult struct {
@@ -53,6 +55,10 @@ type Engine struct {
 	rules             RuleResolver
 	excludeContainers map[string]struct{} // exclude_containers set; absent → label only
 	warnOnceKeys      sync.Map            // one-time diagnostic WARN keys for this process
+	minAge            time.Duration       // global min_age (0 = off); rules may override
+	optIn             bool                // watch_by_default: false — only watch_containers / versentry.watch=true
+	watchContainers   map[string]struct{} // watch_containers (opt-in by name)
+	now               func() time.Time    // clock for min_age (tests)
 }
 
 // NewEngine wires the core check loop.
@@ -77,7 +83,42 @@ func NewEngine(
 		ruleSelector:      RuleTagSelector{},
 		rules:             rules,
 		excludeContainers: excludeContainers,
+		now:               time.Now,
 	}
+}
+
+// SetWatchByDefault sets the watch policy: true (default) checks every container
+// not opted out; false checks only containers labeled versentry.watch=true.
+func (e *Engine) SetWatchByDefault(watch bool) {
+	e.optIn = !watch
+}
+
+// SetWatchContainers sets the opt-in name list (used only when watch_by_default is false).
+func (e *Engine) SetWatchContainers(names map[string]struct{}) {
+	e.watchContainers = names
+}
+
+func (e *Engine) watchPolicy() watchPolicy {
+	p := watchPolicy{exclude: e.excludeContainers, watchByDefault: !e.optIn}
+	if e.optIn {
+		p.watch = e.watchContainers
+	}
+	return p
+}
+
+// selectContainers warns about configured names missing from the fleet and
+// applies the watch policy.
+func (e *Engine) selectContainers(containers []model.Container) ([]model.Container, int) {
+	warnMissingExcludeContainers(containers, e.excludeContainers, e.log)
+	if e.optIn {
+		warnMissingContainers(containers, e.watchContainers, "watch_containers", e.log)
+	}
+	return filterByWatchPolicy(containers, e.watchPolicy(), e.log)
+}
+
+// SetMinAge sets the global min_age (0 = off). Config rules may override per image.
+func (e *Engine) SetMinAge(d time.Duration) {
+	e.minAge = d
 }
 
 // RunOnce performs a single pass over all running containers and returns
@@ -97,8 +138,7 @@ func (e *Engine) RunOnce(ctx context.Context) ([]model.UpdateAvailable, []string
 		e.log.Warn("empty container list, state prune skipped")
 	}
 
-	warnMissingExcludeContainers(containers, e.excludeContainers, e.log)
-	monitored, excluded := filterByWatch(containers, e.excludeContainers, e.log)
+	monitored, excluded := e.selectContainers(containers)
 	e.log.Info("listed running containers",
 		"count", len(containers),
 		"monitored", len(monitored),
@@ -107,7 +147,7 @@ func (e *Engine) RunOnce(ctx context.Context) ([]model.UpdateAvailable, []string
 
 	pass := registrypass.New(e.log)
 
-	var checked, upToDate, updates, skipped int
+	var checked, upToDate, updates, skipped, pending int
 	found := make([]model.UpdateAvailable, 0)
 	activeKeys := make([]string, 0, len(monitored))
 	activeSeen := make(map[string]struct{}, len(monitored))
@@ -146,6 +186,8 @@ func (e *Engine) RunOnce(ctx context.Context) ([]model.UpdateAvailable, []string
 			}
 		case statusSkipped:
 			skipped++
+		case statusPending:
+			pending++
 		}
 
 		e.logContainerResult(result)
@@ -156,6 +198,7 @@ func (e *Engine) RunOnce(ctx context.Context) ([]model.UpdateAvailable, []string
 		"checked", checked,
 		"up-to-date", upToDate,
 		"updates", updates,
+		"pending", pending,
 		"skipped", skipped,
 		"excluded", excluded,
 	)
@@ -195,8 +238,9 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 
 	mode, rule, digestCause := resolveTrackingMode(e.rules, parsed.Host, parsed.Repo, parsed.Tag, c.Name, c.Labels)
 	e.logTrackingDiagnostics(c.Name, parsed.Repo, parsed.Tag, mode, digestCause, rule)
+	minAge := e.effectiveMinAge(rule)
 	if mode == imageweb.ModeDigest {
-		return e.checkDigest(ctx, c, parsed, reg, pass)
+		return e.checkDigest(ctx, c, parsed, reg, pass, minAge)
 	}
 
 	listCtx, cancel := context.WithTimeout(ctx, e.timeouts.Registry.Duration)
@@ -204,6 +248,9 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 	cancel()
 	if err != nil {
 		return e.mapRegistryRequestError(ctx, base, "list tags", parsed.Repo, err)
+	}
+	if mode == imageweb.ModeSemver {
+		e.logFloatingTagHint(c.Name, parsed.Repo, parsed.Tag, tags)
 	}
 
 	if rule != nil && rule.Include != nil {
@@ -217,7 +264,7 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 	}
 
 	if mode == imageweb.ModeNumeric {
-		return e.checkNumeric(base, c, parsed, tags)
+		return e.checkNumeric(ctx, base, c, parsed, reg, pass, tags, minAge)
 	}
 
 	selector := e.tagSelector
@@ -237,6 +284,24 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 		return e.skipped(base, "no matching semver tags in registry"), nil
 	}
 	e.logSkippedBareSemverCandidates(c.Name, parsed.Repo, current, latest, tags)
+
+	if latest.GreaterThan(current) && minAge > 0 {
+		gated, pend, err := e.pickAgedCandidate(ctx, pass, reg, parsed, minAge, tags,
+			func(remaining []string) (string, bool) {
+				t, v, ok := selector.Select(current, remaining)
+				return t, ok && v.GreaterThan(current)
+			},
+			sameSemverVersion,
+		)
+		if err != nil {
+			return e.mapRegistryRequestError(ctx, base, "image age", parsed.Repo, err)
+		}
+		if pend != nil {
+			return e.pendingResult(c, parsed.Tag, pend, minAge), nil
+		}
+		latestTag = gated
+		latest, _ = semver.NewVersion(gated)
+	}
 
 	if latest.GreaterThan(current) {
 		update := model.UpdateAvailable{
@@ -268,10 +333,14 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 }
 
 func (e *Engine) checkNumeric(
+	ctx context.Context,
 	base containerResult,
 	c model.Container,
 	parsed imageref.Parsed,
+	reg registry.Registry,
+	pass *registrypass.Pass,
 	tags []string,
+	minAge time.Duration,
 ) (containerResult, error) {
 	current, ok := parseNumericVersion(parsed.Tag)
 	if !ok {
@@ -283,6 +352,24 @@ func (e *Engine) checkNumeric(
 		return e.skipped(base, "no matching numeric tags in registry"), nil
 	}
 	e.logSkippedBareNumericCandidates(c.Name, parsed.Repo, current, latest, tags)
+
+	if compareNumeric(latest, current) > 0 && minAge > 0 {
+		gated, pend, err := e.pickAgedCandidate(ctx, pass, reg, parsed, minAge, tags,
+			func(remaining []string) (string, bool) {
+				t, v, ok := selectNumericTag(current, remaining)
+				return t, ok && compareNumeric(v, current) > 0
+			},
+			sameNumericVersion,
+		)
+		if err != nil {
+			return e.mapRegistryRequestError(ctx, base, "image age", parsed.Repo, err)
+		}
+		if pend != nil {
+			return e.pendingResult(c, parsed.Tag, pend, minAge), nil
+		}
+		latestTag = gated
+		latest, _ = parseNumericVersion(gated)
+	}
 
 	if compareNumeric(latest, current) > 0 {
 		update := model.UpdateAvailable{
@@ -321,6 +408,7 @@ func (e *Engine) checkDigest(
 	parsed imageref.Parsed,
 	reg registry.Registry,
 	pass *registrypass.Pass,
+	minAge time.Duration,
 ) (containerResult, error) {
 	base := containerResult{Container: c, ImageRef: c.ImageRef, CurrentTag: parsed.Tag}
 
@@ -350,6 +438,20 @@ func (e *Engine) checkDigest(
 			RemoteDigest: remoteDigest,
 			ImageRef:     c.ImageRef,
 		}, nil
+	}
+
+	if minAge > 0 {
+		// The tag moved; its current image must itself be old enough (no older
+		// candidate exists for a digest: the previous image is no longer the tag).
+		age, known, err := e.candidateAge(ctx, pass, reg, parsed, parsed.Tag)
+		if err != nil {
+			return e.mapRegistryRequestError(ctx, base, "image age", parsed.Repo+":"+parsed.Tag, err)
+		}
+		if known && age < minAge {
+			r := e.pendingResult(c, parsed.Tag, &pendingCandidate{tag: parsed.Tag, age: age}, minAge)
+			r.LocalDigest, r.RemoteDigest = localDigest, remoteDigest
+			return r, nil
+		}
 	}
 
 	update := model.UpdateAvailable{
@@ -453,6 +555,9 @@ func (e *Engine) logContainerResult(r containerResult) {
 	case statusUpToDate:
 		attrs = append(attrs, "tag", r.CurrentTag)
 		e.log.Debug("container checked", attrs...)
+	case statusPending:
+		attrs = append(attrs, "tag", r.CurrentTag, "reason", r.Reason)
+		e.log.Info("update pending", attrs...)
 	case statusSkipped:
 		attrs = append(attrs, "reason", r.Reason)
 		if r.quiet {

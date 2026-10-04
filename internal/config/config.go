@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,7 +16,10 @@ import (
 
 // PluginConfig names a plugin implementation and its opaque settings.
 type PluginConfig struct {
-	Type   string         `yaml:"type"`
+	Type string `yaml:"type"`
+	// Name identifies a notifier in logs and per-notifier delivery state.
+	// Optional; see NotifierIDs for the default.
+	Name   string         `yaml:"name"`
 	Config map[string]any `yaml:"config"`
 }
 
@@ -25,6 +29,8 @@ type RuleConfig struct {
 	Include string `yaml:"include"`
 	Track   string `yaml:"track"` // optional; only "digest" is supported
 	Mode    string `yaml:"mode"`  // deprecated alias for track (digest only)
+	// MinAge overrides the global min_age for this image; nil = inherit, 0 = off.
+	MinAge *Duration `yaml:"min_age"`
 }
 
 // Config is the top-level Versentry configuration loaded from YAML.
@@ -43,6 +49,17 @@ type Config struct {
 	Timezone          string         `yaml:"timezone"`
 	RegistryProxy     string         `yaml:"registry_proxy"`
 	HealthMaxAge      Duration       `yaml:"health_max_age"`
+	// MinAge delays notifications until the candidate image is this old in the
+	// registry (config blob created). 0 = off.
+	MinAge Duration `yaml:"min_age"`
+	// WatchByDefault: nil/true = check every container not opted out (default);
+	// false = opt-in, only containers labeled versentry.watch=true.
+	WatchByDefault *bool `yaml:"watch_by_default"`
+	// WatchContainers: exact names checked in opt-in mode (in addition to the
+	// versentry.watch=true label). Ignored (WARN) while watch_by_default is true.
+	WatchContainers []string `yaml:"watch_containers"`
+	// RemindAfter re-sends a still-pending update after this long (run only). 0 = off.
+	RemindAfter Duration `yaml:"remind_after"`
 }
 
 var scheduleParser = cron.NewParser(
@@ -65,12 +82,38 @@ func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
-	parsed, err := time.ParseDuration(raw)
+	parsed, err := ParseDuration(raw)
 	if err != nil {
 		return fmt.Errorf("parse duration %q: %w", raw, err)
 	}
 	d.Duration = parsed
 	return nil
+}
+
+// ParseDuration is time.ParseDuration plus a leading day count ("3d", "1d12h").
+// Days are 24h; the rest must be a Go duration.
+func ParseDuration(raw string) (time.Duration, error) {
+	s := strings.TrimSpace(raw)
+	i := strings.IndexByte(s, 'd')
+	if i <= 0 {
+		return time.ParseDuration(s)
+	}
+	days, err := strconv.Atoi(s[:i])
+	if err != nil {
+		return time.ParseDuration(s) // let Go report the error for the whole string
+	}
+	if days < 0 {
+		return 0, fmt.Errorf("negative day count in %q", raw)
+	}
+	total := time.Duration(days) * 24 * time.Hour
+	if rest := s[i+1:]; rest != "" {
+		extra, err := time.ParseDuration(rest)
+		if err != nil {
+			return 0, err
+		}
+		total += extra
+	}
+	return total, nil
 }
 
 // Load reads and parses a YAML configuration file.
@@ -100,11 +143,30 @@ func Load(path string) (*Config, error) {
 	if len(cfg.Notifiers) == 0 {
 		return nil, fmt.Errorf("at least one notifier is required")
 	}
+	if _, err := NotifierIDs(cfg.Notifiers); err != nil {
+		return nil, err
+	}
 	if err := validateRules(cfg.Rules); err != nil {
 		return nil, err
 	}
-	if _, _, err := ExcludeContainerSet(cfg.ExcludeContainers); err != nil {
+	if cfg.MinAge.Duration < 0 {
+		return nil, fmt.Errorf("min_age must not be negative")
+	}
+	if cfg.RemindAfter.Duration < 0 {
+		return nil, fmt.Errorf("remind_after must not be negative")
+	}
+	exclude, _, err := ExcludeContainerSet(cfg.ExcludeContainers)
+	if err != nil {
 		return nil, err
+	}
+	watch, _, err := WatchContainerSet(cfg.WatchContainers)
+	if err != nil {
+		return nil, err
+	}
+	for name := range watch {
+		if _, ok := exclude[name]; ok {
+			return nil, fmt.Errorf("container %q is in both watch_containers and exclude_containers", name)
+		}
 	}
 	if cfg.Schedule != "" {
 		if _, err := scheduleParser.Parse(cfg.Schedule); err != nil {
@@ -118,6 +180,37 @@ func Load(path string) (*Config, error) {
 	ApplyEnvOverrides(cfg)
 
 	return cfg, nil
+}
+
+// WatchesByDefault reports the effective watch_by_default (true when unset).
+func (c *Config) WatchesByDefault() bool {
+	return c.WatchByDefault == nil || *c.WatchByDefault
+}
+
+// NotifierIDs returns a stable ID per notifier: its name when set, else its
+// type for the first notifier of that type and type#2, type#3, … for later
+// ones (adding a second telegram keeps the first one's ID). IDs key the
+// per-notifier delivery state, so they must be unique.
+func NotifierIDs(notifiers []PluginConfig) ([]string, error) {
+	ids := make([]string, len(notifiers))
+	seenType := make(map[string]int)
+	used := make(map[string]int)
+	for i, n := range notifiers {
+		id := strings.TrimSpace(n.Name)
+		if id == "" {
+			seenType[n.Type]++
+			id = n.Type
+			if c := seenType[n.Type]; c > 1 {
+				id = fmt.Sprintf("%s#%d", n.Type, c)
+			}
+		}
+		if prev, dup := used[id]; dup {
+			return nil, fmt.Errorf("notifiers[%d]: name %q already used by notifiers[%d]; set a unique name", i, id, prev)
+		}
+		used[id] = i
+		ids[i] = id
+	}
+	return ids, nil
 }
 
 // ResolveStatePath returns the path to the notification state file.
@@ -148,8 +241,11 @@ func validateRules(rules []RuleConfig) error {
 		if effective != "" && effective != "digest" {
 			return fmt.Errorf("rules[%d]: unknown track %q, only \"digest\" supported", i, effective)
 		}
-		if rule.Include == "" && effective != "digest" {
-			return fmt.Errorf("rules[%d]: include is required unless track is digest", i)
+		if rule.Include == "" && effective != "digest" && rule.MinAge == nil {
+			return fmt.Errorf("rules[%d]: include, track: digest, or min_age is required", i)
+		}
+		if rule.MinAge != nil && rule.MinAge.Duration < 0 {
+			return fmt.Errorf("rules[%d]: min_age must not be negative", i)
 		}
 		if rule.Include != "" {
 			if _, err := regexp.Compile(rule.Include); err != nil {
@@ -183,6 +279,16 @@ func RuleUsesDeprecatedMode(rule RuleConfig) bool {
 // Names are trimmed. Empty entries are an error. Duplicate names are kept once; the second
 // return value lists unique duplicates (for optional WARN — not a config error).
 func ExcludeContainerSet(names []string) (map[string]struct{}, []string, error) {
+	return containerNameSet("exclude_containers", names)
+}
+
+// WatchContainerSet builds the watch_containers set (opt-in by name); same rules as
+// ExcludeContainerSet.
+func WatchContainerSet(names []string) (map[string]struct{}, []string, error) {
+	return containerNameSet("watch_containers", names)
+}
+
+func containerNameSet(field string, names []string) (map[string]struct{}, []string, error) {
 	if len(names) == 0 {
 		return nil, nil, nil
 	}
@@ -192,7 +298,7 @@ func ExcludeContainerSet(names []string) (map[string]struct{}, []string, error) 
 	for i, raw := range names {
 		name := strings.TrimSpace(raw)
 		if name == "" {
-			return nil, nil, fmt.Errorf("exclude_containers[%d]: name is required", i)
+			return nil, nil, fmt.Errorf("%s[%d]: name is required", field, i)
 		}
 		if _, ok := out[name]; ok {
 			if _, logged := dupSeen[name]; !logged {

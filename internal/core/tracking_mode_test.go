@@ -25,8 +25,8 @@ func TestResolveTrackingModeDigestRule(t *testing.T) {
 	if mode != imageweb.ModeDigest || cause != digestCauseRule {
 		t.Fatalf("mode=%q cause=%q", mode, cause)
 	}
-	if linksDisplayMode(mode, cause) != LinksModeDigestRule {
-		t.Fatalf("display = %q", linksDisplayMode(mode, cause))
+	if linksDisplayMode(mode, cause, "9-alpine") != LinksModeDigestRule {
+		t.Fatalf("display = %q", linksDisplayMode(mode, cause, "9-alpine"))
 	}
 }
 
@@ -42,8 +42,8 @@ func TestResolveTrackingModeNonSemverAuto(t *testing.T) {
 	if mode != imageweb.ModeDigest || cause != digestCauseAuto {
 		t.Fatalf("mode=%q cause=%q", mode, cause)
 	}
-	if linksDisplayMode(mode, cause) != LinksModeDigestAuto {
-		t.Fatalf("display = %q", linksDisplayMode(mode, cause))
+	if linksDisplayMode(mode, cause, "pg17-trixie") != LinksModeDigestAuto {
+		t.Fatalf("display = %q", linksDisplayMode(mode, cause, "pg17-trixie"))
 	}
 }
 
@@ -83,8 +83,8 @@ func TestLogTrackingDiagnosticsLatestSkipsDigestAutoWarn(t *testing.T) {
 	if mode != imageweb.ModeDigest || cause != digestCauseAuto {
 		t.Fatalf("mode=%q cause=%q", mode, cause)
 	}
-	if linksDisplayMode(mode, cause) != LinksModeDigestAuto {
-		t.Fatalf("links MODE = %q, want digest(auto)", linksDisplayMode(mode, cause))
+	if linksDisplayMode(mode, cause, "latest") != LinksModeDigestAuto {
+		t.Fatalf("links MODE = %q, want digest(auto)", linksDisplayMode(mode, cause, "latest"))
 	}
 
 	eng.logTrackingDiagnostics("web", "library/nginx", "latest", mode, cause, nil)

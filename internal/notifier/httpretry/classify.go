@@ -13,6 +13,7 @@ import (
 // DefaultClassifier applies generic HTTP retry rules (network, 5xx, 429).
 func DefaultClassifier(status int, body []byte, retryAfterHeader string, netErr error) Outcome {
 	if netErr != nil {
+		netErr = RedactURLError(netErr)
 		if errors.Is(netErr, context.Canceled) || errors.Is(netErr, context.DeadlineExceeded) {
 			return Outcome{Err: fmt.Errorf("request: %w", netErr), Retryable: false}
 		}

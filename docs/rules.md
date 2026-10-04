@@ -8,15 +8,29 @@ Back to [README](../README.md) · [Configuration overview](configuration.md)
 
 ## Two sources (priority)
 
-1. **Config** `rules:` — image repo path as in compose (`postgres`, `chatwoot/chatwoot`, `gethomepage/homepage` for GHCR)
-2. **Container labels** `versentry.include` / `versentry.track` — that container only
+1. **Config** `rules:` — the base for an image (repo path as in compose: `postgres`, `chatwoot/chatwoot`, `gethomepage/homepage` for GHCR)
+2. **Container labels** `versentry.include` / `versentry.track` / `versentry.min_age` — override the config rule for that container only
 3. Neither → default detection (semver if the tag parses; otherwise digest)
 
-**Config wins over labels — whole rule, not field-by-field.** If an image has a rule in config `rules:`, labels (`versentry.include`, `versentry.track`) for that image are **ignored** for **every** container running that image. The config rule overrides entirely, not per field. To set `track: digest` for an image that already has a config rule, add `track` on that config rule itself — not on a label. Labels apply only to images **without** a config rule.
+**Config is the base, labels override per container, field by field.** A config rule applies to every container of that image. A container's own labels override only the fields they set and inherit the rest:
 
-**Practical consequence:** with a shared `rules` entry for `postgres`, you cannot give two Postgres containers different `include`/`track` via labels. Exclude one container from monitoring with `exclude_containers` (or `versentry.watch=false`) instead.
+| Field | Config `rules[]` | Label (overrides for that container) |
+|-------|------------------|--------------------------------------|
+| `include` | `include:` | `versentry.include` |
+| `track` | `track: digest` | `versentry.track=digest`, or `versentry.track=auto` to undo a config `track: digest` (default detection: semver → numeric → digest) |
+| `min_age` | `min_age:` | `versentry.min_age` (`3d`, `36h`, `0` = off) |
 
-Invalid regex / unknown `track` in config → fail at startup. Invalid label values → WARN and ignore (that field; pass continues).
+Example: config `postgres` → `include: "^17\\."`, `min_age: 3d`; one container labeled `versentry.include=^16\.` follows the 16 line and still waits 3 days. Other `postgres` containers keep `^17\.`.
+
+When labels change a config rule, Versentry logs a one-time **INFO** `container labels override config rule` with `fields=include,track,…`, so central policy shows where local exceptions are.
+
+**Only labels you set count.** Versentry reads `versentry.*` labels from the container as created by your Compose file or `docker run`. The same keys baked into an image by its publisher (`LABEL versentry.include=…` in their Dockerfile) are ignored, so a third-party image cannot override your central rules or opt itself in. Docker copies image labels onto the container, so a `versentry.*` value identical to the image's is treated as coming from the image. Rare edge: if an image does bake a `versentry.*` label, setting the **same** value on the container has no effect either — use the config (`rules[]`, `exclude_containers`, `watch_containers`) for that image.
+
+**Switching detection with a label** (`track` digest ↔ auto) changes what Versentry remembers for that container, so it may notify about it once — same as changing the config rule.
+
+Invalid regex / unknown `track` in config → fail at startup. Invalid label values → WARN and ignore that label field; the config rule's value for that field (if any) still applies, and the pass continues.
+
+**Selection is the one place where config is not overridden by a label:** `exclude_containers` beats `versentry.watch=true`. Exclusion wins from either source (`versentry.watch=false` also beats `watch_containers`) — see [Container scope](configuration.md#container-scope-opt-out).
 
 Default detection (no `track`):
 
@@ -63,7 +77,7 @@ Force **digest** detection for an image/container: compare local vs remote diges
 | Floating / line tags you want rebuild alerts for, not “newer version” | `valkey/valkey:9-alpine`, `redis:7-alpine`, `stable`, `mainline` |
 | Usually unnecessary | Pinned `1.2.3` (rebuild tracking of an exact pin is rare) — allowed but uncommon |
 
-Sources: config `track: digest`, or label `versentry.track=digest`. Only value supported: `digest`.
+Sources: config `track: digest`, or label `versentry.track=digest`. Config accepts only `digest`; a label may also be `auto` to cancel a config `track: digest` for that one container.
 
 **With `include`:** if both are set on the same effective rule, `include` is ignored and Versentry logs a **one-time WARN** (`include applies only in semver mode`). The same WARN fires when `include` is set but the running tag is not semver (digest fallback). Not a config error.
 
@@ -113,13 +127,31 @@ Long claiming-tag lists are truncated (`tags=a,b,… (N total)`, first 10 shown)
 | `16` + [`16.9`, `17`, `17.6`] | Selects `17.6` (major); bare `17` dropped but point release wins |
 | Degenerate: only bare `17`, no `17.x` | No major offered — rare; pin a point tag if you need that alert |
 
-`include` does **not** re-enable bare integers as candidates (it filters after/along the same selection rules). Escape for floating majors is to run a multi-segment current tag (or accept digest tracking if you later opt into that model).
+`include` does **not** re-enable bare integers as candidates (it filters after/along the same selection rules). Escape for floating majors is to run a multi-segment current tag, or `track: digest` for rebuild alerts — see [Floating tags on the semver path](#floating-tags-on-the-semver-path).
 
 ## Numeric tags
 
 When Masterminds semver rejects a tag but it matches `^v?\d+(\.\d+)+$` (optional `v`, then only digits and dots — no letters or `-rc` / `.4a` suffixes), Versentry compares versions **segment by segment**. Missing trailing segments count as `0` (so `1.2.3` is older than `1.2.3.4`). The first segment is the major for bump classification (`Bump`) and for pinning via `include` — same as semver.
 
 `versentry links` shows MODE `numeric` for this path. Notification URLs follow the semver-style link rules (release list / registry tag page).
+
+## Floating tags on the semver path
+
+Tags like `postgres:16`, `redis:7-alpine`, or `nginx:1.27` parse as semver, so Versentry compares **versions**: `16` is treated as `16.0.0` and the newest suitable tag wins — often a new major (`16 → 18.1 (major)`). That answers *“is there a newer line?”*, never *“did my tag move?”*. When `16` is re-pointed from 16.9 to 16.10 (or rebuilt on a patched base image), that is exactly what `docker pull` would fetch, yet semver has nothing new to report.
+
+Detection is **not** changed for these tags (switching them to digest would silently hide new majors). Versentry points the gap out instead:
+
+| Signal | When |
+|--------|------|
+| One-time **INFO** on `check` / `run` | The registry has more specific tags under the current tag's numeric core (`16` → `16.10`, `1.27` → `1.27.5`, `7-alpine` → `7.4.11-alpine`) — `floating tag on semver path … add track: digest for rebuild alerts` with `line_tag=` as evidence |
+| `versentry links` MODE `semver(floating)` | Current tag is a bare major (`16`, `7-alpine`, `v2`) — decided from the tag alone, since `links` makes no registry calls |
+
+A two-component tag (`1.27`) is flagged only by the INFO, because without the tag list it cannot be told apart from a pinned release: `postgres:16.4` has no `16.4.x` tags and stays silent. Full `x.y.z` tags are never flagged.
+
+Choose per image:
+
+- **Newer versions** (default): keep semver; pin a line with `include` if majors are noise.
+- **Rebuild alerts for the tag you run**: `track: digest` (config rule or label `versentry.track=digest`). You then lose the “newer major exists” signal for that image.
 
 ## Digest diagnostics
 
@@ -131,11 +163,11 @@ Versentry surfaces the trap:
 |--------|------|
 | One-time **WARN** | Tag is neither semver nor strict numeric → digest fallback — *newer version tags will not be detected* |
 | One-time **WARN** | `include` is set but the container is on digest (`digest=rule` or `digest=auto`) — rule is dead weight |
-| `versentry links` **MODE** | `digest(rule)` vs `digest(auto)` vs `semver` / `numeric` — see [Commands — links](commands.md#links) |
+| `versentry links` **MODE** | `digest(rule)` vs `digest(auto)` vs `semver` / `semver(floating)` / `numeric` — see [Commands — links](commands.md#links) |
 
 **Exception:** tag `latest` (Docker’s default floating tag) still uses `digest(auto)` in `links`, but does **not** emit the digest-fallback WARN — that nature is expected, not a surprise. Other floating names (`stable`, `main`, `edge`, …) still WARN.
 
-WARN keys are remembered for the process lifetime (daemon restart clears them).
+WARN / INFO keys are remembered for the process lifetime (daemon restart clears them).
 
 ## Regex escaping (common footgun)
 

@@ -81,10 +81,10 @@ func (p *Provider) labelsForContainer(
 	containerLabels map[string]string,
 	cache map[string]map[string]string,
 ) map[string]string {
-	labels := map[string]string{}
-
+	var imgLabels map[string]string
 	if imageID != "" {
-		imgLabels, ok := cache[imageID]
+		var ok bool
+		imgLabels, ok = cache[imageID]
 		if !ok {
 			imgLabels = map[string]string{}
 			if img, err := p.client.ImageInspect(ctx, imageID); err == nil && img.Config != nil {
@@ -94,12 +94,37 @@ func (p *Provider) labelsForContainer(
 			}
 			cache[imageID] = imgLabels
 		}
-		for k, v := range imgLabels {
-			labels[k] = v
-		}
 	}
+	return mergeLabels(imgLabels, containerLabels)
+}
 
+// controlLabelPrefix marks Versentry's own control labels (watch, include,
+// track, min_age). They override central config, so only values set when the
+// container was created (compose / docker run) count — never ones an image
+// publisher baked in with Dockerfile LABEL.
+const controlLabelPrefix = "versentry."
+
+// mergeLabels returns image labels overlaid by container labels (container wins).
+// Docker copies image labels into the container's own labels, so a versentry.*
+// container label whose value equals the image's is treated as image-provided
+// and dropped. Known limit: if an image bakes versentry.X=v, a container label
+// with the same v cannot be told apart and is dropped too — use the config
+// (rules[], exclude_containers, watch_containers) for that image instead.
+// Without image labels (inspect failed) nothing is dropped.
+func mergeLabels(imgLabels, containerLabels map[string]string) map[string]string {
+	labels := make(map[string]string, len(imgLabels)+len(containerLabels))
+	for k, v := range imgLabels {
+		if strings.HasPrefix(k, controlLabelPrefix) {
+			continue
+		}
+		labels[k] = v
+	}
 	for k, v := range containerLabels {
+		if strings.HasPrefix(k, controlLabelPrefix) {
+			if iv, fromImage := imgLabels[k]; fromImage && iv == v {
+				continue
+			}
+		}
 		labels[k] = v
 	}
 	return labels

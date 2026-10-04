@@ -36,8 +36,7 @@ func (e *Engine) WriteLinks(ctx context.Context, w io.Writer) error {
 		return fmt.Errorf("list containers: %w", err)
 	}
 
-	warnMissingExcludeContainers(containers, e.excludeContainers, e.log)
-	monitored, excluded := filterByWatch(containers, e.excludeContainers, e.log)
+	monitored, excluded := e.selectContainers(containers)
 	e.log.Info("listed running containers",
 		"count", len(containers),
 		"monitored", len(monitored),
@@ -96,7 +95,7 @@ func linkRowFor(e *Engine, c model.Container) LinkRow {
 	return LinkRow{
 		Container: name,
 		ImageTag:  imageTag,
-		Mode:      linksDisplayMode(mode, digestCause),
+		Mode:      linksDisplayMode(mode, digestCause, parsed.Tag),
 		URL:       link,
 	}
 }

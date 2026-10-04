@@ -31,6 +31,9 @@ provider:
 
 # --- Notifiers ---
 # One entry per channel. Default mode for all: digest (one delivery per check pass).
+# Each notifier has an ID for logs and per-notifier delivery state: its type, then
+# type#2, … for more of the same type — or set `name:` (next to `type:`, unique).
+# A failing notifier is retried alone next pass; the others get no duplicates.
 # Env overrides YAML (VERSENTRY_*). See docs/configuration.md and docs/notifications.md.
 notifiers:
   - type: stdout
@@ -114,10 +117,29 @@ notifiers:
 #      retry_delay: "1s"
 # Env: VERSENTRY_NTFY_URL, VERSENTRY_NTFY_TOPIC, VERSENTRY_NTFY_TOKEN, VERSENTRY_NTFY_PROXY
 
+# Apprise: send through your own apprise-api server (caronc/apprise) to email,
+# Slack, Pushover, Matrix, Teams, … — see docs/notifications.md#apprise.
+# Use key (URLs saved in apprise-api) or urls (stateless), not both.
+#  - type: apprise
+#    config:
+#      url: "http://apprise:8000"
+#      key: "versentry"
+#      tag: "all"          # omit = only URLs saved without a tag
+#      # urls: ["mailto://user:pass@gmail.com", "pover://user@token"]
+#      # username: "versentry"
+#      # password: "secret"
+#      mode: digest
+#      timeout: "10s"
+#      retries: 3
+#      retry_delay: "1s"
+# Env: VERSENTRY_APPRISE_URL, VERSENTRY_APPRISE_KEY, VERSENTRY_APPRISE_URLS,
+#      VERSENTRY_APPRISE_USERNAME, VERSENTRY_APPRISE_PASSWORD, VERSENTRY_APPRISE_PROXY
+
 # --- Rules (optional) ---
-# Image axis: per-repo include filters and/or track: digest.
-# Config rule for an image overrides versentry.include / versentry.track on all
-# containers of that image — see docs/rules.md and docs/configuration.md (axes).
+# Image axis: per-repo include filters, track: digest, min_age.
+# A rule is the base for every container of that image; a container's own
+# versentry.include / versentry.track / versentry.min_age labels override it field by field
+# (exclusion is the exception: see exclude_containers). See docs/rules.md.
 #
 # rules:
 #   - image: "postgres"
@@ -126,6 +148,8 @@ notifiers:
 #     include: "^v\\d+\\.\\d+\\.\\d+-ce$"
 #   - image: "valkey/valkey"
 #     track: digest
+#   - image: "grafana/grafana"
+#     min_age: 7d        # per-image override of the global min_age (0 = off)
 # floating tag rebuilds (e.g. 9-alpine), not semver "newer"
 
 # --- Exclude containers (optional) ---
@@ -134,6 +158,13 @@ notifiers:
 #
 # exclude_containers:
 #   - chatwoot-notify
+#
+# Opt-in instead (many containers, few that matter): check only these names
+# and containers labeled versentry.watch=true. Exclusion still wins.
+# watch_by_default: false
+# watch_containers:
+#   - postgres
+#   - nextcloud
 
 # --- Timeouts ---
 timeouts:
@@ -148,6 +179,18 @@ interval: 12h
 # schedule: "0 12 * * *"
 # timezone: Europe/Paris
 # cron only; ignored with interval-only mode
+
+# --- Minimum image age (optional) ---
+# Notify only when the new image is at least this old in the registry
+# (guards against broken releases re-pushed within a day). Durations accept days.
+# Semver: a too-young newest version falls back to the newest old-enough one.
+# See docs/configuration.md#minimum-image-age-min_age.
+# min_age: 3d
+
+# --- Reminders (optional, versentry run) ---
+# Re-send an update you have not applied yet, marked "(reminder)".
+# Default: notify each target once. See docs/configuration.md#reminders-remind_after.
+# remind_after: 7d
 # Cron needs timezone in config or TZ env — see docs/configuration.md#tz-vs-timezone
 # TZ in compose/docker is separate: it sets log timestamps for the whole container.
 

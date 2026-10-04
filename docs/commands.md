@@ -9,6 +9,7 @@ Back to [README](../README.md) · [Configuration overview](configuration.md)
 | `versentry check` | One stateless pass over running containers, then exit (always reports all updates) |
 | `versentry run` | Periodic checks until SIGINT/SIGTERM (suppresses repeat notifications via state file) |
 | `versentry links` | Print notification URLs for monitored containers (no registry calls, no notify/state) |
+| `versentry notify-test` | Send a sample notification (one semver + one digest update) through every configured notifier; no Docker/registry calls, no state |
 | `versentry health` | Liveness probe: Docker provider + fresh run-pass stamp (for Docker HEALTHCHECK) |
 | `versentry version` | Print build version |
 
@@ -23,6 +24,7 @@ Back to [README](../README.md) · [Configuration overview](configuration.md)
 # Inside the container (default path is already mounted):
 docker exec versentry versentry check
 docker exec versentry versentry links
+docker exec versentry versentry notify-test
 docker exec versentry versentry health
 
 # Local binary / custom path:
@@ -48,6 +50,7 @@ Columns: `CONTAINER`, `IMAGE:TAG`, `MODE`, `URL` (`(no url)` when empty). Table 
 | Value | Meaning |
 |-------|---------|
 | `semver` | Tag parses as Masterminds semver; version comparison |
+| `semver(floating)` | Semver, and the current tag is a bare major (`16`, `7-alpine`): newer versions are reported, rebuilds of this tag are not — see [Rules — floating tags](rules.md#floating-tags-on-the-semver-path) |
 | `numeric` | Strict dotted numeric only (`v0.63.1.3`); segment comparison when semver rejects the tag |
 | `digest(rule)` | Explicit `track: digest` (config or label) |
 | `digest(auto)` | Neither semver nor strict numeric — digest fallback (rebuild of the **same** tag only) |
@@ -55,13 +58,31 @@ Columns: `CONTAINER`, `IMAGE:TAG`, `MODE`, `URL` (`(no url)` when empty). Table 
 
 One-time WARN on check/run/links when `digest(auto)` is used (except tag `latest`), and when an `include` rule is ignored under digest tracking — see [Rules](rules.md#digest-diagnostics).
 
+## `notify-test`
+
+Sends one synthetic batch through **every** notifier in the config, so you can check tokens, chat IDs, proxies, and templates without waiting for a real update:
+
+| Container | Change | URL |
+|-----------|--------|-----|
+| `versentry-test-semver` | `1.4.0 → 1.5.0` (`ghcr.io/blackraincoat/versentry`) | GitHub releases (from the OCI `source` label) |
+| `versentry-test-digest` | `digest changed: sha256:111111111111… → sha256:222222222222…` (`nginx:latest`) | Docker Hub tag page |
+
+Two items, so digest-mode templates render the multi-update header (`{{.Count}}`). `instance_name` is resolved as usual. No Docker socket or registry access, no state file read or written — safe to run next to a live `versentry run`.
+
+Exit code is non-zero when no notifier is configured or **any** notifier fails; the others are still tried and each result is logged (`notifier delivered` / `notifier failed`).
+
+```bash
+docker exec versentry versentry notify-test
+./versentry notify-test -c ./config.yaml --log-level debug
+```
+
 ## `check` vs `run`
 
 | | `versentry check` | `versentry run` |
 |---|-------------------|-----------------|
 | Duration | Single pass, exit | Daemon until stopped |
 | State read | Never | Yes (scheduled passes) |
-| State write | Never | Yes (after all notifiers succeed) |
+| State write | Never | Yes (per notifier, after each successful delivery) |
 | Notifications | All updates found | Only updates not already notified (scheduled) |
 | Scheduling | N/A | `interval` or cron `schedule`; **initial check when state file is missing**, then tick/slot |
 

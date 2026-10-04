@@ -53,6 +53,8 @@ registry_proxy: "socks5://user:pass@host:1080"
 
 **Per-pass cache:** each check pass deduplicates `ListTags` / `TagDigest` by `host/repo` (digest mode: `host/repo#tag`). Multiple containers on the same image hit the registry once per pass. Cache is reset between passes.
 
+**Digest lookups use HEAD:** digest mode asks for the tag digest with `HEAD /v2/<repo>/manifests/<tag>` (header `Docker-Content-Digest`), not `GET`. Docker Hub counts manifest `GET` as a pull — against the same anonymous per-IP budget as your own `docker pull` — while `HEAD` is free. The digest is the same top-level object either way (multi-arch index). If a registry rejects `HEAD` (400/405/501) or strips the required headers, Versentry retries once with `GET` (DEBUG `tag_digest head fallback`). Not-found, auth, 429, and timeouts return immediately without a second request.
+
 **Rate limits (HTTP 429):** one short `Retry-After` retry (≤10s) per request; if still rate-limited or `Retry-After` is long/missing, the host is skipped for the rest of the pass (`registry rate limited, will retry next pass`). Other registry hosts are unaffected. Persistent 5xx after transport retries skips the image only (not the whole host).
 
 **Timeouts:** `timeouts.registry` (default 30s) is the overall ceiling for one `ListTags` / `TagDigest` call. Separately, each HTTP attempt uses short dial / TLS / response-header budgets (~5s / ~8s / ~10s) so a stuck TCP/TLS socket cannot consume the full ceiling. go-containerregistry retries Temporary network errors (including header timeout) on the same transport; Versentry does not add a second reconnect loop around that.

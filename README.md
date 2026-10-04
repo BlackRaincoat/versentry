@@ -1,16 +1,18 @@
 # Versentry
 
-Monitor Docker image updates and get notified — without pulling or restarting containers. Versentry compares running containers against OCI registries (semver tags and digest drift on floating tags) and sends alerts through Telegram, Discord, Gotify, ntfy, webhooks, or stdout. Notify-only by design.
+Monitor Docker image updates and get notified — without pulling or restarting containers. Versentry compares running containers against OCI registries (semver tags and digest drift on floating tags) and sends alerts through Telegram, Discord, Gotify, ntfy, Apprise (email, Slack, Pushover, Matrix and 100+ more), webhooks, or stdout. Notify-only by design.
 
-Works on self-hosted hosts; Telegram notifier traffic can use a SOCKS5 or HTTP proxy.
+Works on self-hosted hosts; registry and notifier traffic can use a SOCKS5 or HTTP proxy.
 
 ## Features
 
-- **Tag filtering** — central `rules:` in config and per-container `versentry.include` labels
+- **Central policy** — `rules:` per image in config (tag `include` regex, `track: digest`, `min_age`); container labels override a rule for one container
+- **Scope** — all running containers with opt-out, or opt-in via `watch_containers` / `versentry.watch=true`
 - **Any OCI registry** — public hosts (Docker Hub, GHCR, Quay, GitLab) work out of the box; private and self-hosted via `type: oci`
-- **Notifications** — Telegram, Discord, Gotify, ntfy, generic webhook, stdout; optional proxy on HTTP notifiers
+- **Notifications** — Telegram, Discord, Gotify, ntfy, Apprise (100+ services via your apprise-api), generic webhook, stdout; optional proxy on HTTP notifiers
 - **Delivery modes** — `simple` or `digest`; Go `text/template` overrides where supported
 - **Detection** — semver/numeric (newest tag; cross-major marked) and digest comparison for non-version tags (`latest`, …)
+- **Timing** — `min_age` (only notify about images old enough in the registry), `remind_after` (re-send updates you have not applied)
 - **Notify-only** — never modifies containers or images on the host
 - **Scheduling** — fixed `interval` or cron `schedule` with timezone
 - **Resilience** — HTTP retries on notifiers; per-pass registry dedup and rate-limit handling
@@ -37,6 +39,12 @@ docker compose up -d
 docker compose logs -f
 ```
 
+Verify notifier credentials and templates without waiting for a real update:
+
+```bash
+docker exec versentry versentry notify-test
+```
+
 One-off check without the daemon:
 
 ```bash
@@ -55,13 +63,13 @@ Requires read access to the Docker socket and network reachability to registries
 | [Configuration overview](docs/configuration.md) | Config file layout, provider, timeouts, scheduling, state, env vars, container scope |
 | [Rules](docs/rules.md) | Config rules, labels, semver vs digest, regex escaping |
 | [Registries](docs/registries.md) | Public hosts, private OCI, `registry_proxy`, rate limits |
-| [Notifications](docs/notifications.md) | Telegram, Discord, webhook, templates, examples |
+| [Notifications](docs/notifications.md) | Telegram, Discord, Gotify, ntfy, Apprise, webhook, templates, examples |
 | [Deployment](docs/deployment.md) | Docker image, compose, volumes, healthcheck, signals |
-| [Commands](docs/commands.md) | `check`, `run`, `links`, `health`, flags, state behavior |
+| [Commands](docs/commands.md) | `check`, `run`, `links`, `notify-test`, `health`, flags, state behavior |
 
 Full annotated example: [`config.example.yaml`](config.example.yaml).
 
-Not sure Versentry is what you need? See [When to use Versentry](docs/comparison.md).
+Not sure Versentry is what you need? See [When to use Versentry](docs/comparison.md) — including a comparison with WUD, Diun, Watchtower, dockcheck, and Cup.
 
 ## License
 

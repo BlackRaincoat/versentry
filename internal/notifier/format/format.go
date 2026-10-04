@@ -32,6 +32,8 @@ type ItemData struct {
 	Host       string
 	// Bump is major|minor|patch for tag updates; empty for digest. Optional in templates.
 	Bump string
+	// Reminder is true when this target was notified before (remind_after).
+	Reminder bool
 }
 
 // DigestData is the template context for a digest batch.
@@ -52,6 +54,7 @@ type UpdateEntry struct {
 	URL        string `json:"url,omitempty"`
 	Mode       string `json:"mode"`
 	Bump       string `json:"bump,omitempty"`
+	Reminder   bool   `json:"reminder,omitempty"`
 }
 
 // Payload is the default webhook JSON envelope.
@@ -81,6 +84,7 @@ func ItemFromEvent(instanceName string, event model.UpdateAvailable, escapeHTML 
 		LatestTag:  escape(event.LatestTag, escapeHTML),
 		Host:       escape(event.Host, escapeHTML),
 		Bump:       event.Bump,
+		Reminder:   event.Reminder,
 	}
 }
 
@@ -97,6 +101,7 @@ func UpdateEntryFromEvent(event model.UpdateAvailable) UpdateEntry {
 		URL:        item.URL,
 		Mode:       TrackingMode(event),
 		Bump:       event.Bump,
+		Reminder:   event.Reminder,
 	}
 }
 
@@ -123,20 +128,26 @@ func TrackingMode(event model.UpdateAvailable) string {
 
 // ChangeText formats the human-readable change line.
 // Cross-major tag updates append " (major)"; minor/patch stay unmarked.
+// A remind_after re-notification appends " (reminder)".
 func ChangeText(event model.UpdateAvailable, escapeHTML bool) string {
+	var s string
 	if event.LatestTag != "" {
 		left := escape(event.CurrentTag, escapeHTML)
 		right := escape(event.LatestTag, escapeHTML)
-		s := left + " → " + right
+		s = left + " → " + right
 		if event.Bump == model.BumpMajor {
 			s += " (major)"
 		}
-		return s
+	} else {
+		s = "digest changed: " +
+			escape(ShortDigest(event.LocalDigest), escapeHTML) +
+			" → " +
+			escape(ShortDigest(event.RemoteDigest), escapeHTML)
 	}
-	return "digest changed: " +
-		escape(ShortDigest(event.LocalDigest), escapeHTML) +
-		" → " +
-		escape(ShortDigest(event.RemoteDigest), escapeHTML)
+	if event.Reminder {
+		s += " (reminder)"
+	}
+	return s
 }
 
 // ShortDigest formats a digest for display.
