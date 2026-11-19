@@ -11,24 +11,30 @@ import (
 	"github.com/BlackRaincoat/versentry/internal/core/registrypass"
 	"github.com/BlackRaincoat/versentry/internal/imageref"
 	"github.com/BlackRaincoat/versentry/internal/model"
+	"github.com/BlackRaincoat/versentry/internal/registry"
 )
 
 var minAgeNow = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 
-// agedRegistry adds ImageCreated (registry.ImageCreatedReader) to modeTestRegistry.
+// agedRegistry adds ImageInfo (registry.ImageInfoReader) to modeTestRegistry.
 type agedRegistry struct {
 	modeTestRegistry
 	created      map[string]time.Time // tag → created; missing = zero (unknown)
+	versions     map[string]string    // tag → org.opencontainers.image.version
 	createdErr   error
 	createdCalls []string
 }
 
-func (r *agedRegistry) ImageCreated(ctx context.Context, repo, tag string) (time.Time, error) {
+func (r *agedRegistry) ImageInfo(ctx context.Context, repo, tag string) (registry.ImageInfo, error) {
 	r.createdCalls = append(r.createdCalls, tag)
 	if r.createdErr != nil {
-		return time.Time{}, r.createdErr
+		return registry.ImageInfo{}, r.createdErr
 	}
-	return r.created[tag], nil
+	return registry.ImageInfo{
+		Digest:  strings.TrimPrefix(r.remoteDigest, "sha256:"),
+		Created: r.created[tag],
+		Version: r.versions[tag],
+	}, nil
 }
 
 func daysAgo(d float64) time.Time {
@@ -141,6 +147,32 @@ func TestMinAgeUnknownCreatedIsNotDelayed(t *testing.T) {
 	res := checkOne(t, newMinAgeEngine(t, reg, 3*24*time.Hour, nil, ""), "org/app:1.0.0")
 	if res.Status != statusUpdate || res.LatestTag != "1.2.0" {
 		t.Fatalf("status=%s latest=%q, want update to 1.2.0", res.Status, res.LatestTag)
+	}
+}
+
+func TestMinAgeFutureCreated(t *testing.T) {
+	cases := []struct {
+		name    string
+		created time.Time
+		want    checkStatus
+	}{
+		// Build host clock slightly ahead: brand new, still delayed.
+		{"small skew is brand new", minAgeNow.Add(2 * time.Hour), statusPending},
+		// Bogus far-future timestamp: unknown age, would otherwise pend forever.
+		{"far future is unknown", time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC), statusUpdate},
+		{"just past the skew window", minAgeNow.Add(maxCreatedSkew + time.Minute), statusUpdate},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := &agedRegistry{
+				modeTestRegistry: modeTestRegistry{host: imageref.DockerHubHost, listTags: []string{"1.0.0", "1.2.0"}},
+				created:          map[string]time.Time{"1.2.0": tc.created},
+			}
+			res := checkOne(t, newMinAgeEngine(t, reg, 3*24*time.Hour, nil, ""), "org/app:1.0.0")
+			if res.Status != tc.want {
+				t.Fatalf("status=%s latest=%q, want %s", res.Status, res.LatestTag, tc.want)
+			}
+		})
 	}
 }
 

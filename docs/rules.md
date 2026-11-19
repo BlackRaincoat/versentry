@@ -9,7 +9,7 @@ Back to [README](../README.md) · [Configuration overview](configuration.md)
 ## Two sources (priority)
 
 1. **Config** `rules:` — the base for an image (repo path as in compose: `postgres`, `chatwoot/chatwoot`, `gethomepage/homepage` for GHCR)
-2. **Container labels** `versentry.include` / `versentry.track` / `versentry.min_age` — override the config rule for that container only
+2. **Container labels** `versentry.include` / `versentry.exclude` / `versentry.track` / `versentry.min_age` — override the config rule for that container only
 3. Neither → default detection (semver if the tag parses; otherwise digest)
 
 **Config is the base, labels override per container, field by field.** A config rule applies to every container of that image. A container's own labels override only the fields they set and inherit the rest:
@@ -17,6 +17,7 @@ Back to [README](../README.md) · [Configuration overview](configuration.md)
 | Field | Config `rules[]` | Label (overrides for that container) |
 |-------|------------------|--------------------------------------|
 | `include` | `include:` | `versentry.include` |
+| `exclude` | `exclude:` | `versentry.exclude` |
 | `track` | `track: digest` | `versentry.track=digest`, or `versentry.track=auto` to undo a config `track: digest` (default detection: semver → numeric → digest) |
 | `min_age` | `min_age:` | `versentry.min_age` (`3d`, `36h`, `0` = off) |
 
@@ -38,7 +39,7 @@ Default detection (no `track`):
 2. Else **numeric** if the tag is strictly dotted digits (`^v?\d+(\.\d+)+$`, typically 4+ segments such as `v0.63.1.3`)
 3. Else **digest** (local vs remote digest for the **same** tag: `latest`, `pg17-trixie`, `9-alpine`, …)
 
-`include` applies on the semver and numeric paths only. It filters **tag shape** (flavor suffixes, `v`-prefix, …) **and** can pin a **major line** — see [Include and major lines](#include-and-major-lines). Also [Digest diagnostics](#digest-diagnostics) and [Numeric tags](#numeric-tags).
+`include` and `exclude` apply on the semver and numeric paths only. It filters **tag shape** (flavor suffixes, `v`-prefix, …) **and** can pin a **major line** — see [Include and major lines](#include-and-major-lines). Also [Digest diagnostics](#digest-diagnostics) and [Numeric tags](#numeric-tags).
 
 ```yaml
 rules:
@@ -104,6 +105,33 @@ rules:
 **Footgun:** `include` does double duty — tag format **and** major pin. An old rule like `^2\\.` means “do not tell me about 3.0”, not only “prefer `2.*` spelling”. If you want major alerts again, widen or remove that include.
 
 **0.x / patch lines (e.g. Metabase):** to stay on `0.63.1.*` rather than every newer `0.*` tag, use a tight `include` (e.g. `^v?0\\.63\\.1\\.\\d+$`). Same mechanism as pinning major 2.
+
+## Exclude
+
+`exclude` is the opposite of `include`: it **drops** registry tags that match, and keeps everything else. Use it when the default choice is almost right and only some tags get in the way — release candidates, a flavour you never run, a line you are not ready for:
+
+```yaml
+rules:
+  - image: "example/app"
+    exclude: "-(rc|beta|alpha)"        # never offer pre-release spellings
+  - image: "grafana/grafana"
+    exclude: "^12\\."                    # never offer 12.x; the newest other version (11.x or 13+) still is
+  - image: "postgres"
+    include: "-alpine$"                # alpine flavour only …
+    exclude: "^1[89]"                  # … but not 18 / 19 yet
+```
+
+| | Behavior |
+|--|----------|
+| Order | `include` first (if set), then `exclude` on what is left, then the usual newest-version choice |
+| Tag matching both | removed (exclude wins) |
+| `exclude` only | default selection on the remaining tags (stable releases, any major) |
+| Running tag matches `exclude` | still checked — `exclude` filters **candidates**, not the container (`1.0.0-rc1` still sees `1.0.0`) |
+| Nothing left after `exclude` | container skipped with `no tags left after exclude rule` |
+| Digest tracking | ignored, with a one-time WARN `exclude rule ignored` (same as `include`) |
+| Label `versentry.exclude` | replaces the config `exclude` for that container (one-time INFO `fields=exclude`); invalid regex → WARN, config value kept |
+
+`include` and `exclude` are regular expressions with the same escaping rules — see [Regex escaping](#regex-escaping-common-footgun).
 
 ## Bare integer candidates (CI / build numbers)
 

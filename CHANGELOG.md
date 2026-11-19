@@ -6,6 +6,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follo
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-20
+
+### Added
+
+- Digest updates show versions instead of hashes when the image carries the OCI `org.opencontainers.image.version` label: `2.3.1 → 2.4.0 (built 3 days ago)`, `2.3.1 rebuilt`. The new version and build time are read from the new image in the registry — free with `min_age`, otherwise one request (a Docker Hub pull) per update actually sent, at most 5 per check. Templates: `{{.CurrentVersion}}`, `{{.LatestVersion}}`, `{{.Built}}`; webhook JSON: `current_version`, `latest_version`, `latest_created`. Tag updates also show the build time when `min_age` already looked it up. Images without the label show digests as before.
+- `heartbeat` (`versentry run`): ping an external dead-man's-switch (Healthchecks.io, Uptime Kuma push monitor, …) after each scheduled check — `url` on success, optional `fail_url` when the check could not run or any notifier failed — with a one-line summary as the POST body. A ping that times out or hits a network or 5xx error is retried once. Env: `VERSENTRY_HEARTBEAT_URL`, `VERSENTRY_HEARTBEAT_FAIL_URL`.
+- `jitter` (`versentry run`): delay each scheduled check by a random time in `[0, jitter)` so hosts on the same schedule do not query registries at once. The initial check and `SIGUSR1` / `SIGUSR2` are not delayed; `SIGUSR1` cancels a pending delayed check. With `interval`, `jitter` must be shorter than `interval`.
+- `exclude` in `rules[]` and label `versentry.exclude`: drop registry tags matching a regex from the candidates (after `include`, if both are set) — e.g. `-(rc|beta)` or a major line you are not ready for. The running tag is not filtered; nothing left → container skipped; ignored with a WARN under digest tracking.
+
+### Fixed
+
+- `min_age`: an image whose build timestamp is more than a day in the future (broken build clock) is treated as of unknown age and no longer stays pending until that date. Up to a day ahead still counts as brand new.
+- Digest tracking compares the local image against the digest recorded for the **same registry**. An image pulled from more than one registry under the same path (e.g. `docker.io/acme/app` and `ghcr.io/acme/app`) could be compared with the other registry's digest, giving a false update or a missed one. A container whose image has no digest from its own registry (pulled elsewhere and re-tagged) is now skipped as "no local digest".
+- Notifier error logs no longer double-escape the endpoint: `error="request: Post https://ntfy.sh: …"` instead of `error="request: Post \"https://ntfy.sh\": …"`.
+- `versentry run` start line logs only the active trigger: `schedule=…` with cron, `interval=…` otherwise. It used to print `interval` even under `schedule`, where it is ignored.
+
 ## [1.5.0] - 2026-10-05
 
 ### Added
@@ -181,6 +197,8 @@ First public release.
 - Multi-arch Docker image (amd64, arm64)
 - `VERSENTRY_*` environment variable overrides for secrets and paths
 
+[1.6.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.6.0
+[1.5.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.5.0
 [1.4.1]: https://github.com/BlackRaincoat/versentry/releases/tag/1.4.1
 [1.4.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.4.0
 [1.3.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.3.0

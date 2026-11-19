@@ -69,7 +69,7 @@ Generic HTTP POST (custom hooks). Shared HTTP retry helper with Telegram. Logs o
 
 Set `url`, `Authorization`, and `proxy` via env (`VERSENTRY_WEBHOOK_URL`, `VERSENTRY_WEBHOOK_AUTHORIZATION`, `VERSENTRY_WEBHOOK_PROXY`) or YAML — see [Configuration — environment variables](configuration.md#environment-variables).
 
-**Default JSON payload** (no `template`): envelope with `instance`, `count`, and `updates[]`. Each update has `container`, `image`, `host`, `current_tag`, `latest_tag`, `change`, `url`, `mode` (`semver` or `digest`), optional `bump` (`major`/`minor`/`patch` when applicable), and `reminder: true` on [`remind_after`](configuration.md#reminders-remind_after) repeats. In `simple` mode the same envelope is sent with `count: 1`.
+**Default JSON payload** (no `template`): envelope with `instance`, `count`, and `updates[]`. Each update has `container`, `image`, `host`, `current_tag`, `latest_tag`, `change`, `url`, `mode` (`semver` or `digest`), optional `bump` (`major`/`minor`/`patch` when applicable), optional `current_version` / `latest_version` / `latest_created` (RFC 3339) — see [Version and build time](#version-and-build-time) — and `reminder: true` on [`remind_after`](configuration.md#reminders-remind_after) repeats. In `simple` mode the same envelope is sent with `count: 1`.
 
 **Custom `template`:** `simple` mode receives one update as `ItemData`. `digest` mode receives the full payload struct (`Instance`, `Count`, `Updates` slice). Default `Content-Type` is `application/json`; override via `headers`.
 
@@ -403,13 +403,15 @@ Shared field builders live in `internal/notifier/format` (`ItemData`, `Payload`)
 | `{{.Container}}` | Container name |
 | `{{.Image}}` | Image repo (`library/caddy`) |
 | `{{.Tag}}` | Current tag (`event.CurrentTag`) |
-| `{{.Change}}` | Ready-made change line: `2.11.3 → 2.11.4`, or `2.8.1 → 3.2.0 (major)` for cross-major, or `digest changed: abc123… → def456…` |
+| `{{.Change}}` | Ready-made change line: `2.11.3 → 2.11.4`, or `2.8.1 → 3.2.0 (major)` for cross-major; for digest updates `2.3.1 → 2.4.0` / `2.3.1 rebuilt` / `new image 2.4.0` when the image has a version label, else `digest changed: abc123… → def456…`. A known build time appends ` (built 3 days ago)` |
 | `{{.URL}}` | Web link (may be empty) — see [Notification URLs](#notification-urls) |
 | `{{.CurrentTag}}` | Current tag (same value as `Tag`) |
 | `{{.LatestTag}}` | Newer tag (empty for digest-only updates) |
 | `{{.Host}}` | Registry host |
 | `{{.Bump}}` | `major` / `minor` / `patch` for tag updates; empty for digest. Optional — old templates that omit it keep working. Default text only appends ` (major)` to `Change` for cross-major. |
 | `{{.Reminder}}` | `true` when this is a [`remind_after`](configuration.md#reminders-remind_after) repeat of an already-notified update. Default `Change` text already ends with ` (reminder)`. |
+| `{{.CurrentVersion}}` / `{{.LatestVersion}}` | OCI version labels of the running and the new image (digest updates); empty when unknown — see [Version and build time](#version-and-build-time) |
+| `{{.Built}}` | Age of the new image (`3 days ago`); empty when unknown |
 
 ### Digest wrapper (telegram / gotify / ntfy `digest_template`)
 
@@ -417,7 +419,23 @@ Shared field builders live in `internal/notifier/format` (`ItemData`, `Payload`)
 
 ### Webhook / Discord `digest` template
 
-`Payload` struct: `{{.Instance}}`, `{{.Count}}`, `{{.Updates}}` — each update has `container`, `image`, `host`, `current_tag`, `latest_tag`, `change`, `url`, `mode`.
+`Payload` struct: `{{.Instance}}`, `{{.Count}}`, `{{.Updates}}` — each update has `container`, `image`, `host`, `current_tag`, `latest_tag`, `change`, `url`, `mode`, and the optional fields of the default JSON payload.
+
+### Version and build time
+
+A digest update (a floating tag such as `latest` was rebuilt) says nothing useful as two hashes. When the image carries the standard `org.opencontainers.image.version` label, the notification shows versions instead:
+
+```
+app: 2.3.1 → 2.4.0 (built 3 days ago)
+app: 2.3.1 rebuilt (built 1 day ago)
+```
+
+- **Current version** comes from the running image's labels — no registry request.
+- **New version and build time** come from the new image's config in the registry. With [`min_age`](configuration.md#minimum-image-age-min_age) this is the lookup already made, so it costs nothing. Otherwise it is one request (counted as a pull by Docker Hub), made only for updates actually being sent — not for ones suppressed by state — and at most 5 per check; beyond that, updates show digests.
+- Tag updates keep their tags; they get the build time only when `min_age` already looked it up.
+- Images without the label (most Docker Official Images: `postgres`, `nginx`, `redis`) show digests as before. Label values that are not a plain version string are ignored.
+
+Detection and notification state are unchanged: the update is still the digest.
 
 ## Default Telegram templates
 

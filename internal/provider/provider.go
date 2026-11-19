@@ -10,7 +10,9 @@ import (
 // Provider lists running containers and resolves the local digest for a container image.
 type Provider interface {
 	ListRunning(ctx context.Context) ([]model.Container, error)
-	LocalDigest(ctx context.Context, container model.Container, repo string) (string, error)
+	// LocalDigest returns the registry manifest digest the container image was
+	// pulled with from host/repo (host as normalized by imageref, e.g. index.docker.io).
+	LocalDigest(ctx context.Context, container model.Container, host, repo string) (string, error)
 	// Ping checks API reachability without listing or inspecting workloads (for health probes).
 	Ping(ctx context.Context) error
 }

@@ -1,8 +1,10 @@
 package format
 
 import (
+	"fmt"
 	"html"
 	"strings"
+	"time"
 
 	"github.com/BlackRaincoat/versentry/internal/imageweb"
 	"github.com/BlackRaincoat/versentry/internal/model"
@@ -34,6 +36,12 @@ type ItemData struct {
 	Bump string
 	// Reminder is true when this target was notified before (remind_after).
 	Reminder bool
+	// CurrentVersion / LatestVersion: OCI version labels of the running and the
+	// new image (digest updates); empty when unknown.
+	CurrentVersion string
+	LatestVersion  string
+	// Built is the new image's age ("3 days ago"); empty when unknown.
+	Built string
 }
 
 // DigestData is the template context for a digest batch.
@@ -55,6 +63,11 @@ type UpdateEntry struct {
 	Mode       string `json:"mode"`
 	Bump       string `json:"bump,omitempty"`
 	Reminder   bool   `json:"reminder,omitempty"`
+	// CurrentVersion / LatestVersion: OCI version labels (digest updates).
+	CurrentVersion string `json:"current_version,omitempty"`
+	LatestVersion  string `json:"latest_version,omitempty"`
+	// LatestCreated: build time of the new image, RFC 3339 UTC.
+	LatestCreated string `json:"latest_created,omitempty"`
 }
 
 // Payload is the default webhook JSON envelope.
@@ -85,6 +98,10 @@ func ItemFromEvent(instanceName string, event model.UpdateAvailable, escapeHTML 
 		Host:       escape(event.Host, escapeHTML),
 		Bump:       event.Bump,
 		Reminder:   event.Reminder,
+
+		CurrentVersion: escape(event.CurrentVersion, escapeHTML),
+		LatestVersion:  escape(event.LatestVersion, escapeHTML),
+		Built:          BuiltAgo(event),
 	}
 }
 
@@ -102,7 +119,18 @@ func UpdateEntryFromEvent(event model.UpdateAvailable) UpdateEntry {
 		Mode:       TrackingMode(event),
 		Bump:       event.Bump,
 		Reminder:   event.Reminder,
+
+		CurrentVersion: event.CurrentVersion,
+		LatestVersion:  event.LatestVersion,
+		LatestCreated:  createdRFC3339(event.LatestCreated),
 	}
+}
+
+func createdRFC3339(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // PayloadFromEvents builds the default webhook JSON envelope.
@@ -128,26 +156,65 @@ func TrackingMode(event model.UpdateAvailable) string {
 
 // ChangeText formats the human-readable change line.
 // Cross-major tag updates append " (major)"; minor/patch stay unmarked.
-// A remind_after re-notification appends " (reminder)".
+// Digest updates show OCI versions when known ("2.3.1 → 2.4.0", "2.3.1 rebuilt",
+// "new image 2.4.0"), else the two short digests. A known build time appends
+// " (built 3 days ago)"; a remind_after re-notification appends " (reminder)".
 func ChangeText(event model.UpdateAvailable, escapeHTML bool) string {
 	var s string
-	if event.LatestTag != "" {
+	switch {
+	case event.LatestTag != "":
 		left := escape(event.CurrentTag, escapeHTML)
 		right := escape(event.LatestTag, escapeHTML)
 		s = left + " → " + right
 		if event.Bump == model.BumpMajor {
 			s += " (major)"
 		}
-	} else {
+	case event.LatestVersion != "":
+		latest := escape(event.LatestVersion, escapeHTML)
+		switch event.CurrentVersion {
+		case "":
+			s = "new image " + latest
+		case event.LatestVersion:
+			s = latest + " rebuilt"
+		default:
+			s = escape(event.CurrentVersion, escapeHTML) + " → " + latest
+		}
+	default:
 		s = "digest changed: " +
 			escape(ShortDigest(event.LocalDigest), escapeHTML) +
 			" → " +
 			escape(ShortDigest(event.RemoteDigest), escapeHTML)
 	}
+	if built := BuiltAgo(event); built != "" {
+		s += " (built " + built + ")"
+	}
 	if event.Reminder {
 		s += " (reminder)"
 	}
 	return s
+}
+
+// BuiltAgo renders the new image's age relative to the check ("3 days ago");
+// empty when the build time is unknown.
+func BuiltAgo(event model.UpdateAvailable) string {
+	if event.LatestCreated.IsZero() {
+		return ""
+	}
+	ref := event.CheckedAt
+	if ref.IsZero() {
+		ref = time.Now()
+	}
+	age := ref.Sub(event.LatestCreated)
+	switch {
+	case age < time.Hour:
+		return "less than an hour ago"
+	case age < 2*time.Hour:
+		return "1 hour ago"
+	case age < 48*time.Hour:
+		return fmt.Sprintf("%d hours ago", int(age/time.Hour))
+	default:
+		return fmt.Sprintf("%d days ago", int(age/(24*time.Hour)))
+	}
 }
 
 // ShortDigest formats a digest for display.

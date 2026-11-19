@@ -30,7 +30,7 @@ func TestRedactURLErrorKeepsOpHostAndCause(t *testing.T) {
 	err := RedactURLError(&url.Error{Op: "Post", URL: secretURL, Err: dialRefused()})
 	msg := err.Error()
 	assertNoSecrets(t, msg)
-	if want := `Post "https://hooks.example.com": dial tcp: connection refused`; msg != want {
+	if want := `Post https://hooks.example.com: dial tcp: connection refused`; msg != want {
 		t.Fatalf("msg = %q, want %q", msg, want)
 	}
 	if !errors.Is(err, syscall.ECONNREFUSED) {
@@ -63,7 +63,7 @@ func TestRedactURLErrorWrapped(t *testing.T) {
 	err := RedactURLError(fmt.Errorf("create request: %w", inner))
 	msg := err.Error()
 	assertNoSecrets(t, msg)
-	if !strings.HasPrefix(msg, `create request: parse "https://hooks.example.com": `) {
+	if !strings.HasPrefix(msg, `create request: parse https://hooks.example.com: `) {
 		t.Fatalf("msg = %q", msg)
 	}
 }

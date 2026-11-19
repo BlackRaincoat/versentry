@@ -21,7 +21,7 @@ func (p *stubProvider) ListRunning(ctx context.Context) ([]model.Container, erro
 	return nil, nil
 }
 
-func (p *stubProvider) LocalDigest(ctx context.Context, c model.Container, repo string) (string, error) {
+func (p *stubProvider) LocalDigest(ctx context.Context, c model.Container, host, repo string) (string, error) {
 	return "", nil
 }
 

@@ -97,7 +97,7 @@ func TestValidateRulesEmptyIncludeWithoutTrackFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected include required error")
 	}
-	if !strings.Contains(err.Error(), "include, track: digest, or min_age is required") {
+	if !strings.Contains(err.Error(), "include, exclude, track: digest, or min_age is required") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -227,5 +227,74 @@ func TestNotifierIDs(t *testing.T) {
 	}
 	if _, err := NotifierIDs([]PluginConfig{{Type: "ntfy", Name: "x"}, {Type: "gotify", Name: " x "}}); err == nil {
 		t.Fatal("duplicate names must fail")
+	}
+}
+
+func TestValidateRulesExclude(t *testing.T) {
+	if err := validateRules([]RuleConfig{{Image: "nginx", Exclude: `-(rc|beta)`}}); err != nil {
+		t.Fatalf("exclude-only rule must be valid: %v", err)
+	}
+	if err := validateRules([]RuleConfig{{Image: "nginx", Exclude: `(`}}); err == nil || !strings.Contains(err.Error(), "invalid exclude regex") {
+		t.Fatalf("err = %v, want invalid exclude regex", err)
+	}
+}
+
+func TestJitterValidation(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/config.yaml"
+	load := func(extra string) error {
+		if err := os.WriteFile(path, []byte("provider: {type: docker}\nnotifiers: [{type: stdout}]\n"+extra), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Load(path)
+		return err
+	}
+	if err := load("interval: 12h\njitter: 30m\n"); err != nil {
+		t.Fatalf("valid jitter: %v", err)
+	}
+	if err := load("interval: 1h\njitter: 1h\n"); err == nil || !strings.Contains(err.Error(), "shorter than interval") {
+		t.Fatalf("err = %v, want jitter < interval", err)
+	}
+	if err := load("schedule: \"0 11 * * *\"\ntimezone: UTC\njitter: 2h\n"); err != nil {
+		t.Fatalf("cron + jitter is allowed: %v", err)
+	}
+	if err := load("jitter: -1m\n"); err == nil {
+		t.Fatal("negative jitter must fail")
+	}
+}
+
+func TestHeartbeatValidation(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/config.yaml"
+	load := func(extra string) error {
+		if err := os.WriteFile(path, []byte("provider: {type: docker}\nnotifiers: [{type: stdout}]\n"+extra), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Load(path)
+		return err
+	}
+	if err := load("heartbeat: {url: \"https://hc-ping.com/abc\", fail_url: \"https://hc-ping.com/abc/fail\"}\n"); err != nil {
+		t.Fatalf("valid heartbeat: %v", err)
+	}
+	if err := load("heartbeat: {fail_url: \"https://hc-ping.com/abc/fail\"}\n"); err == nil || !strings.Contains(err.Error(), "fail_url requires url") {
+		t.Fatalf("err = %v", err)
+	}
+	if err := load("heartbeat: {url: \"hc-ping.com/abc\"}\n"); err == nil || !strings.Contains(err.Error(), "http(s) URL") {
+		t.Fatalf("err = %v", err)
+	}
+
+	// Env-injected URL is validated too (Load validates after overrides).
+	t.Setenv(envHeartbeatURL, "ftp://nope")
+	if err := load(""); err == nil {
+		t.Fatal("invalid env heartbeat URL must fail")
+	}
+	t.Setenv(envHeartbeatURL, "https://push.example.com/api/push/tok")
+	t.Setenv(envHeartbeatFailURL, "https://push.example.com/api/push/tok?status=down")
+	if err := os.WriteFile(path, []byte("provider: {type: docker}\nnotifiers: [{type: stdout}]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil || cfg.Heartbeat.URL != "https://push.example.com/api/push/tok" || !strings.HasSuffix(cfg.Heartbeat.FailURL, "status=down") {
+		t.Fatalf("cfg=%+v err=%v", cfg.Heartbeat, err)
 	}
 }

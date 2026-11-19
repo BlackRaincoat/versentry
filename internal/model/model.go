@@ -23,6 +23,13 @@ type UpdateAvailable struct {
 	LocalDigest  string
 	RemoteDigest string
 	CheckedAt    time.Time
+	// CurrentVersion / LatestVersion: org.opencontainers.image.version of the
+	// running and the new image, for digest updates (a moved floating tag).
+	// Empty when the image carries no such label or it was not looked up.
+	CurrentVersion string
+	LatestVersion  string
+	// LatestCreated: build time of the new image; zero when unknown.
+	LatestCreated time.Time
 	// Reminder: same target notified before; re-sent because remind_after elapsed.
 	Reminder bool
 }

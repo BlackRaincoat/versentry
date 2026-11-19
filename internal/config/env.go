@@ -22,6 +22,8 @@ const (
 	envNtfyTopic            = "VERSENTRY_NTFY_TOPIC"
 	envNtfyToken            = "VERSENTRY_NTFY_TOKEN"
 	envNtfyProxy            = "VERSENTRY_NTFY_PROXY"
+	envHeartbeatURL         = "VERSENTRY_HEARTBEAT_URL"
+	envHeartbeatFailURL     = "VERSENTRY_HEARTBEAT_FAIL_URL"
 	envAppriseURL           = "VERSENTRY_APPRISE_URL"
 	envAppriseKey           = "VERSENTRY_APPRISE_KEY"
 	envAppriseURLs          = "VERSENTRY_APPRISE_URLS"
@@ -52,6 +54,12 @@ func ApplyEnvOverrides(cfg *Config) {
 	applyGotifyEnv(cfg)
 	applyNtfyEnv(cfg)
 	applyAppriseEnv(cfg)
+	if v := strings.TrimSpace(os.Getenv(envHeartbeatURL)); v != "" {
+		cfg.Heartbeat.URL = v
+	}
+	if v := strings.TrimSpace(os.Getenv(envHeartbeatFailURL)); v != "" {
+		cfg.Heartbeat.FailURL = v
+	}
 }
 
 func applyInstanceNameEnv(cfg *Config) {

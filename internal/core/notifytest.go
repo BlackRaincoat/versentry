@@ -15,9 +15,9 @@ const (
 	sampleDigestContainer = "versentry-test-digest"
 )
 
-// SampleUpdates returns one semver and one digest update so both change-text
-// shapes, a GitHub releases URL, a registry URL, and the multi-update digest
-// header are exercised. Never touches Docker or a registry.
+// SampleUpdates returns one semver and one digest update (with OCI versions and
+// build time) so both change-text shapes, a GitHub releases URL, a registry URL,
+// and the multi-update digest header are exercised. Never touches Docker or a registry.
 func SampleUpdates(now time.Time) []model.UpdateAvailable {
 	return []model.UpdateAvailable{
 		{
@@ -48,6 +48,10 @@ func SampleUpdates(now time.Time) []model.UpdateAvailable {
 			LocalDigest:  "1111111111111111111111111111111111111111111111111111111111111111",
 			RemoteDigest: "2222222222222222222222222222222222222222222222222222222222222222",
 			CheckedAt:    now,
+			// What DescribeUpdates adds when the image carries a version label.
+			CurrentVersion: "1.27.2",
+			LatestVersion:  "1.27.3",
+			LatestCreated:  now.Add(-3 * 24 * time.Hour),
 		},
 	}
 }

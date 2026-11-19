@@ -130,8 +130,11 @@ func mergeLabels(imgLabels, containerLabels map[string]string) map[string]string
 	return labels
 }
 
-// LocalDigest returns the repo digest of the image currently used by the container.
-func (p *Provider) LocalDigest(ctx context.Context, c model.Container, repo string) (string, error) {
+// LocalDigest returns the repo digest of the image currently used by the container,
+// taken from the RepoDigests entry for host/repo. The host must match too: an
+// image pulled from both docker.io/acme/app and ghcr.io/acme/app carries one
+// entry per registry, and their digests can differ.
+func (p *Provider) LocalDigest(ctx context.Context, c model.Container, host, repo string) (string, error) {
 	inspect, err := p.client.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})
 	if err != nil {
 		return "", fmt.Errorf("inspect container %s: %w", c.ID, err)
@@ -147,7 +150,7 @@ func (p *Provider) LocalDigest(ctx context.Context, c model.Container, repo stri
 		if err != nil {
 			continue
 		}
-		if ref.Context().RepositoryStr() == repo {
+		if ref.Context().RegistryStr() == host && ref.Context().RepositoryStr() == repo {
 			if d, ok := ref.(name.Digest); ok {
 				return d.DigestStr(), nil
 			}
@@ -156,5 +159,5 @@ func (p *Provider) LocalDigest(ctx context.Context, c model.Container, repo stri
 
 	// No registry manifest digest in RepoDigests (locally built or not pulled from a registry).
 	// Do not fall back to image ID — it is not comparable to a registry tag digest.
-	return "", fmt.Errorf("no registry digest for repo %q on container %s", repo, c.Name)
+	return "", fmt.Errorf("no registry digest for %s/%s on container %s", host, repo, c.Name)
 }

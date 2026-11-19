@@ -15,10 +15,10 @@ type Pass struct {
 	log *slog.Logger
 	mu  sync.Mutex
 
-	listTags     map[string]listTagsResult
-	tagDigests   map[string]tagDigestResult
-	imageCreated map[string]imageCreatedResult
-	rateLimited  map[string]struct{}
+	listTags    map[string]listTagsResult
+	tagDigests  map[string]tagDigestResult
+	imageInfo   map[string]imageInfoResult
+	rateLimited map[string]struct{}
 
 	sleep sleepFunc
 }
@@ -33,9 +33,9 @@ type tagDigestResult struct {
 	err    error
 }
 
-type imageCreatedResult struct {
-	created time.Time
-	err     error
+type imageInfoResult struct {
+	info registry.ImageInfo
+	err  error
 }
 
 // New creates a per-pass registry layer. It must not be reused across RunOnce calls.
@@ -44,12 +44,12 @@ func New(log *slog.Logger) *Pass {
 		log = slog.Default()
 	}
 	return &Pass{
-		log:          log,
-		listTags:     make(map[string]listTagsResult),
-		tagDigests:   make(map[string]tagDigestResult),
-		imageCreated: make(map[string]imageCreatedResult),
-		rateLimited:  make(map[string]struct{}),
-		sleep:        sleepContext,
+		log:         log,
+		listTags:    make(map[string]listTagsResult),
+		tagDigests:  make(map[string]tagDigestResult),
+		imageInfo:   make(map[string]imageInfoResult),
+		rateLimited: make(map[string]struct{}),
+		sleep:       sleepContext,
 	}
 }
 
@@ -79,35 +79,55 @@ func (p *Pass) TagDigest(ctx context.Context, reg registry.Registry, host, repo,
 	return digest, err
 }
 
-// ImageCreated returns when the image behind host/repo:tag was built, deduplicating
-// calls within the pass. Zero time with nil error: the registry does not implement
-// registry.ImageCreatedReader or had no usable timestamp (caller treats age as unknown).
+// ImageCreated returns when the image behind host/repo:tag was built (see ImageInfo).
+// Zero time with nil error: the registry does not implement
+// registry.ImageInfoReader or had no usable timestamp (caller treats age as unknown).
 func (p *Pass) ImageCreated(ctx context.Context, reg registry.Registry, host, repo, tag string) (time.Time, error) {
-	reader, ok := reg.(registry.ImageCreatedReader)
+	info, err := p.ImageInfo(ctx, reg, host, repo, tag)
+	return info.Created, err
+}
+
+// ImageInfo returns the config-blob facts for host/repo:tag, deduplicating calls
+// within the pass (min_age and notification details share one lookup). A zero
+// ImageInfo with nil error: the registry does not implement registry.ImageInfoReader.
+func (p *Pass) ImageInfo(ctx context.Context, reg registry.Registry, host, repo, tag string) (registry.ImageInfo, error) {
+	reader, ok := reg.(registry.ImageInfoReader)
 	if !ok {
-		return time.Time{}, nil
+		return registry.ImageInfo{}, nil
 	}
 	key := host + "/" + repo + ":" + tag
 
 	p.mu.Lock()
 	if p.isRateLimitedLocked(host) {
 		p.mu.Unlock()
-		return time.Time{}, registry.ErrRateLimited
+		return registry.ImageInfo{}, registry.ErrRateLimited
 	}
-	if res, ok := p.imageCreated[key]; ok {
+	if res, ok := p.imageInfo[key]; ok {
 		p.mu.Unlock()
-		p.log.Debug("registry cache hit", "op", "image_created", "host", host, "key", key)
-		return res.created, res.err
+		p.log.Debug("registry cache hit", "op", "image_info", "host", host, "key", key)
+		return res.info, res.err
 	}
 	p.mu.Unlock()
 
-	created, err := fetchWithRetry(ctx, p, host, func() (time.Time, error) {
-		return reader.ImageCreated(ctx, repo, tag)
+	info, err := fetchWithRetry(ctx, p, host, func() (registry.ImageInfo, error) {
+		return reader.ImageInfo(ctx, repo, tag)
 	})
 	p.mu.Lock()
-	p.imageCreated[key] = imageCreatedResult{created: created, err: err}
+	p.imageInfo[key] = imageInfoResult{info: info, err: err}
 	p.mu.Unlock()
-	return created, err
+	return info, err
+}
+
+// CachedImageInfo returns an ImageInfo already fetched in this pass without
+// making a request (false when absent or the lookup failed).
+func (p *Pass) CachedImageInfo(host, repo, tag string) (registry.ImageInfo, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	res, ok := p.imageInfo[host+"/"+repo+":"+tag]
+	if !ok || res.err != nil {
+		return registry.ImageInfo{}, false
+	}
+	return res.info, true
 }
 
 func (p *Pass) cachedListTags(key, host, repo string) (listTagsResult, bool) {

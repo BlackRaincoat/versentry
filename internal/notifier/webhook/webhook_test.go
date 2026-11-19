@@ -247,7 +247,7 @@ func TestNetworkErrorDoesNotLeakURLSecrets(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(err.Error(), `"https://hooks.example.com"`) || !strings.Contains(err.Error(), "connection refused") {
+	if !strings.Contains(err.Error(), "Post https://hooks.example.com:") || !strings.Contains(err.Error(), "connection refused") {
 		t.Fatalf("expected host and cause in error: %v", err)
 	}
 }

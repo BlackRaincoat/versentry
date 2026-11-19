@@ -110,6 +110,16 @@ func (e *Engine) logTrackingDiagnostics(container, repo, tag, mode, digestCause 
 			"digest", digestCause,
 		)
 	}
+	if rule != nil && rule.Exclude != nil {
+		e.warnOnce(
+			"exclude-ignored-digest:"+container+"|"+repo,
+			"exclude rule ignored: container tracked by digest (exclude applies only in semver mode)",
+			"container", container,
+			"image", repo,
+			"tag", tag,
+			"digest", digestCause,
+		)
+	}
 }
 
 // logFloatingTagHint emits a one-time INFO when the registry proves the current

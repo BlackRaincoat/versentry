@@ -19,8 +19,11 @@ type RequestError struct {
 	Err error
 }
 
+// Error leaves the URL unquoted, unlike url.Error: it is only scheme://host or
+// [redacted] (no spaces or quotes), and a %q here would be quoted again by the
+// log handler, giving error="Post \"https://…\": …".
 func (e *RequestError) Error() string {
-	return fmt.Sprintf("%s %q: %s", e.Op, e.URL, e.Err)
+	return fmt.Sprintf("%s %s: %s", e.Op, e.URL, e.Err)
 }
 
 func (e *RequestError) Unwrap() error { return e.Err }

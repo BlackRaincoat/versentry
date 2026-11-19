@@ -13,6 +13,7 @@ import (
 
 	"github.com/BlackRaincoat/versentry/internal/config"
 	"github.com/BlackRaincoat/versentry/internal/health"
+	"github.com/BlackRaincoat/versentry/internal/heartbeat"
 	"github.com/BlackRaincoat/versentry/internal/model"
 	"github.com/BlackRaincoat/versentry/internal/netutil"
 	"github.com/BlackRaincoat/versentry/internal/notifier"
@@ -45,6 +46,8 @@ type App struct {
 	engine    *Engine
 	notifiers []notifierSlot
 	log       *slog.Logger
+
+	lastFailedNotifiers int // set by runPass (heartbeat: a failed channel = failed check)
 }
 
 type passMode struct {
@@ -320,6 +323,7 @@ func (a *App) notifierIDs() []string {
 // are not sent duplicates. check / SIGUSR2 send everything to every notifier
 // and leave state alone.
 func (a *App) runPass(ctx context.Context, store *state.Store, mode passMode) error {
+	a.lastFailedNotifiers = 0
 	updates, activeKeys, canPrune, err := a.engine.RunOnce(ctx)
 	if err != nil {
 		return err
@@ -327,6 +331,7 @@ func (a *App) runPass(ctx context.Context, store *state.Store, mode passMode) er
 
 	if !mode.suppress {
 		if len(updates) > 0 {
+			a.engine.DescribeUpdates(ctx, updates)
 			a.notifyAll(ctx, updates)
 		}
 		if mode.updateState {
@@ -361,6 +366,9 @@ func (a *App) runPass(ctx context.Context, store *state.Store, mode passMode) er
 		if len(batch) == 0 {
 			continue
 		}
+		// Only updates actually being sent are described (registry lookups);
+		// later batches reuse the pass cache.
+		a.engine.DescribeUpdates(ctx, batch)
 		if !a.deliver(ctx, slot, batch) {
 			failed++
 			continue
@@ -369,6 +377,7 @@ func (a *App) runPass(ctx context.Context, store *state.Store, mode passMode) er
 			store.RecordDelivery(slot.label(), batch)
 		}
 	}
+	a.lastFailedNotifiers = failed
 	if failed > 0 {
 		a.log.Info("failed notifiers will retry next pass; delivered ones are not re-sent", "failed", failed)
 	}
@@ -391,6 +400,22 @@ func countReminders(batch []model.UpdateAvailable) int {
 	return n
 }
 
+// heartbeatReport pings the external liveness monitor after a scheduled pass.
+// A pass counts as failed when it returned an error or any notifier failed
+// (updates would go unseen); registry skips are normal noise and stay "ok".
+func (a *App) heartbeatReport(ctx context.Context, p *heartbeat.Pinger, passErr error) {
+	if p == nil || ctx.Err() != nil {
+		return // SIGTERM: not a failed check
+	}
+	st := a.engine.LastStats()
+	summary := fmt.Sprintf("versentry: checked=%d up-to-date=%d updates=%d pending=%d skipped=%d excluded=%d failed_notifiers=%d",
+		st.Checked, st.UpToDate, st.Updates, st.Pending, st.Skipped, st.Excluded, a.lastFailedNotifiers)
+	if passErr != nil {
+		summary = "versentry: check failed: " + passErr.Error()
+	}
+	p.Report(ctx, passErr == nil && a.lastFailedNotifiers == 0, summary)
+}
+
 // Check runs a single stateless pass (no state read/write) and exits.
 func (a *App) Check(ctx context.Context) error {
 	return a.runPass(ctx, nil, passMode{suppress: false, updateState: false})
@@ -398,11 +423,13 @@ func (a *App) Check(ctx context.Context) error {
 
 // Run performs periodic checks until ctx is cancelled.
 func (a *App) Run(ctx context.Context, cfg *config.Config, configPath, statePath string) error {
-	a.log.Info("starting periodic checks",
-		"interval", cfg.Interval.Duration,
-		"schedule", cfg.Schedule,
-		"state_file", statePath,
-	)
+	// Only the active trigger: interval is ignored under schedule (and always
+	// carries the 1h default), so logging both suggested it still applied.
+	if cfg.Schedule != "" {
+		a.log.Info("starting periodic checks", "schedule", cfg.Schedule, "state_file", statePath)
+	} else {
+		a.log.Info("starting periodic checks", "interval", cfg.Interval.Duration, "state_file", statePath)
+	}
 
 	store := state.Load(statePath, a.log)
 	store.SetRemindAfter(cfg.RemindAfter.Duration)
@@ -421,11 +448,17 @@ func (a *App) Run(ctx context.Context, cfg *config.Config, configPath, statePath
 	defer stopHeartbeat()
 	go a.runHealthHeartbeat(heartbeatCtx, configPath, cfg)
 
-	scheduleCh, stopSchedule, resetSchedule, err := newScheduleSource(cfg, a.log)
+	rawSchedule, stopSchedule, resetSchedule, err := newScheduleSource(cfg, a.log)
 	if err != nil {
 		return err
 	}
 	defer stopSchedule()
+	jitterCtx, stopJitter := context.WithCancel(ctx)
+	defer stopJitter()
+	scheduleCh, skipJitter := jitterSchedule(jitterCtx, rawSchedule, cfg.Jitter.Duration, nil, a.log)
+	if cfg.Jitter.Duration > 0 {
+		a.log.Info("schedule jitter enabled", "jitter", cfg.Jitter.Duration)
+	}
 
 	sigUSR1 := make(chan os.Signal, 1)
 	sigUSR2 := make(chan os.Signal, 1)
@@ -433,6 +466,14 @@ func (a *App) Run(ctx context.Context, cfg *config.Config, configPath, statePath
 	signal.Notify(sigUSR2, syscall.SIGUSR2)
 	defer signal.Stop(sigUSR1)
 	defer signal.Stop(sigUSR2)
+
+	pinger, err := heartbeat.New(cfg.Heartbeat, a.log)
+	if err != nil {
+		return err
+	}
+	if pinger != nil {
+		a.log.Info("heartbeat enabled", "fail_url", cfg.Heartbeat.FailURL != "")
+	}
 
 	coord := &runCoordinator{log: a.log}
 	scheduled := passMode{suppress: true, updateState: true}
@@ -447,7 +488,11 @@ func (a *App) Run(ctx context.Context, cfg *config.Config, configPath, statePath
 
 	runChecks := func(mode passMode) error {
 		for {
-			if err := a.runPass(ctx, storeFor(mode), mode); err != nil {
+			err := a.runPass(ctx, storeFor(mode), mode)
+			if mode.suppress && mode.updateState { // scheduled / SIGUSR1 / initial
+				a.heartbeatReport(ctx, pinger, err)
+			}
+			if err != nil {
 				coord.mu.Lock()
 				coord.running = false
 				coord.pending = nil
@@ -500,6 +545,7 @@ func (a *App) Run(ctx context.Context, cfg *config.Config, configPath, statePath
 				return a.finishRun(ctx, err)
 			}
 		case <-sigUSR1:
+			skipJitter() // the forced check replaces a pending jittered one
 			if err := trigger(scheduled, "forced scheduled check (SIGUSR1)", true); err != nil {
 				return a.finishRun(ctx, err)
 			}

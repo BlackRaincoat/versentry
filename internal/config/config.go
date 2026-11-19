@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,6 +28,9 @@ type PluginConfig struct {
 type RuleConfig struct {
 	Image   string `yaml:"image"`
 	Include string `yaml:"include"`
+	// Exclude drops registry tags matching this regex from the candidates
+	// (after include, if both are set).
+	Exclude string `yaml:"exclude"`
 	Track   string `yaml:"track"` // optional; only "digest" is supported
 	Mode    string `yaml:"mode"`  // deprecated alias for track (digest only)
 	// MinAge overrides the global min_age for this image; nil = inherit, 0 = off.
@@ -58,6 +62,12 @@ type Config struct {
 	// WatchContainers: exact names checked in opt-in mode (in addition to the
 	// versentry.watch=true label). Ignored (WARN) while watch_by_default is true.
 	WatchContainers []string `yaml:"watch_containers"`
+	// Heartbeat pings an external dead-man's-switch (Healthchecks.io, Uptime
+	// Kuma push, …) after each scheduled check. Empty URL = off.
+	Heartbeat HeartbeatConfig `yaml:"heartbeat"`
+	// Jitter delays each scheduled check by a random duration in [0, Jitter)
+	// (run only; initial check and signals are not delayed). 0 = off.
+	Jitter Duration `yaml:"jitter"`
 	// RemindAfter re-sends a still-pending update after this long (run only). 0 = off.
 	RemindAfter Duration `yaml:"remind_after"`
 }
@@ -65,6 +75,14 @@ type Config struct {
 var scheduleParser = cron.NewParser(
 	cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow,
 )
+
+// HeartbeatConfig is the optional external liveness ping.
+type HeartbeatConfig struct {
+	URL     string   `yaml:"url"`      // pinged after a successful scheduled check
+	FailURL string   `yaml:"fail_url"` // pinged when a check fails; empty = no ping (the missed ping alerts)
+	Proxy   string   `yaml:"proxy"`
+	Timeout Duration `yaml:"timeout"`
+}
 
 // Timeouts holds operation timeouts applied by the core engine.
 type Timeouts struct {
@@ -155,6 +173,12 @@ func Load(path string) (*Config, error) {
 	if cfg.RemindAfter.Duration < 0 {
 		return nil, fmt.Errorf("remind_after must not be negative")
 	}
+	if cfg.Jitter.Duration < 0 {
+		return nil, fmt.Errorf("jitter must not be negative")
+	}
+	if cfg.Schedule == "" && cfg.Jitter.Duration >= cfg.Interval.Duration {
+		return nil, fmt.Errorf("jitter (%s) must be shorter than interval (%s)", cfg.Jitter.Duration, cfg.Interval.Duration)
+	}
 	exclude, _, err := ExcludeContainerSet(cfg.ExcludeContainers)
 	if err != nil {
 		return nil, err
@@ -178,6 +202,10 @@ func Load(path string) (*Config, error) {
 	}
 
 	ApplyEnvOverrides(cfg)
+	// After env: heartbeat URLs are usually injected as secrets.
+	if err := validateHeartbeat(cfg.Heartbeat); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }
@@ -213,6 +241,25 @@ func NotifierIDs(notifiers []PluginConfig) ([]string, error) {
 	return ids, nil
 }
 
+func validateHeartbeat(h HeartbeatConfig) error {
+	if h.URL == "" && h.FailURL != "" {
+		return fmt.Errorf("heartbeat: fail_url requires url")
+	}
+	for field, raw := range map[string]string{"url": h.URL, "fail_url": h.FailURL} {
+		if raw == "" {
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("heartbeat: %s must be an http(s) URL", field)
+		}
+	}
+	if h.Timeout.Duration < 0 {
+		return fmt.Errorf("heartbeat: timeout must not be negative")
+	}
+	return nil
+}
+
 // ResolveStatePath returns the path to the notification state file.
 // When state_file is empty, the default is state.json next to the config file.
 func ResolveStatePath(configPath, stateFile string) string {
@@ -241,8 +288,13 @@ func validateRules(rules []RuleConfig) error {
 		if effective != "" && effective != "digest" {
 			return fmt.Errorf("rules[%d]: unknown track %q, only \"digest\" supported", i, effective)
 		}
-		if rule.Include == "" && effective != "digest" && rule.MinAge == nil {
-			return fmt.Errorf("rules[%d]: include, track: digest, or min_age is required", i)
+		if rule.Include == "" && rule.Exclude == "" && effective != "digest" && rule.MinAge == nil {
+			return fmt.Errorf("rules[%d]: include, exclude, track: digest, or min_age is required", i)
+		}
+		if rule.Exclude != "" {
+			if _, err := regexp.Compile(rule.Exclude); err != nil {
+				return fmt.Errorf("rules[%d]: invalid exclude regex: %w", i, err)
+			}
 		}
 		if rule.MinAge != nil && rule.MinAge.Duration < 0 {
 			return fmt.Errorf("rules[%d]: min_age must not be negative", i)

@@ -23,7 +23,7 @@ func init() {
 	registry.Register("oci", New)
 }
 
-var _ registry.ImageCreatedReader = (*Registry)(nil)
+var _ registry.ImageInfoReader = (*Registry)(nil)
 
 // Registry talks to any OCI Distribution Spec / Docker Registry v2 host.
 // Host and credentials come from plugin configuration.
@@ -116,62 +116,69 @@ func (r *Registry) tagDigestOnce(ctx context.Context, repo, tag string, log *slo
 	return strings.TrimPrefix(desc.Digest.String(), "sha256:"), nil
 }
 
-// ImageCreated returns the config blob "created" time for repo:tag. For a
-// multi-arch index it reads the child matching this process's platform
+// ImageInfo reads the config blob of repo:tag: build time and version label.
+// For a multi-arch index it reads the child matching this process's platform
 // (versentry runs on the Docker host), else the first real platform — all
 // children of one tag are built together. Costs one index GET + one child
 // manifest GET (one Docker Hub pull) + one config blob; callers use it only
-// for update candidates when min_age is set.
-func (r *Registry) ImageCreated(ctx context.Context, repo, tag string) (time.Time, error) {
-	created, err := r.imageCreatedOnce(ctx, repo, tag)
+// for update candidates (min_age) and for digest updates being notified.
+func (r *Registry) ImageInfo(ctx context.Context, repo, tag string) (registry.ImageInfo, error) {
+	info, err := r.imageInfoOnce(ctx, repo, tag)
 	if err != nil {
-		return time.Time{}, mapRegistryError(err)
+		return registry.ImageInfo{}, mapRegistryError(err)
 	}
-	return created, nil
+	return info, nil
 }
 
-func (r *Registry) imageCreatedOnce(ctx context.Context, repo, tag string) (time.Time, error) {
+func (r *Registry) imageInfoOnce(ctx context.Context, repo, tag string) (registry.ImageInfo, error) {
 	ref, err := name.ParseReference(fmt.Sprintf("%s/%s:%s", r.host, repo, tag), r.nameOpts()...)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("parse reference %s/%s:%s: %w", r.host, repo, tag, err)
+		return registry.ImageInfo{}, fmt.Errorf("parse reference %s/%s:%s: %w", r.host, repo, tag, err)
 	}
 
 	desc, err := remote.Get(ref, r.remoteOpts(ctx)...)
 	if err != nil {
-		return time.Time{}, err
+		return registry.ImageInfo{}, err
 	}
 
 	var img v1.Image
 	if desc.MediaType.IsIndex() {
 		idx, err := desc.ImageIndex()
 		if err != nil {
-			return time.Time{}, err
+			return registry.ImageInfo{}, err
 		}
 		manifest, err := idx.IndexManifest()
 		if err != nil {
-			return time.Time{}, err
+			return registry.ImageInfo{}, err
 		}
 		child, ok := pickPlatformChild(manifest.Manifests, runtime.GOOS, runtime.GOARCH)
 		if !ok {
-			return time.Time{}, fmt.Errorf("index %s/%s:%s has no image manifests", r.host, repo, tag)
+			return registry.ImageInfo{}, fmt.Errorf("index %s/%s:%s has no image manifests", r.host, repo, tag)
 		}
 		img, err = idx.Image(child.Digest)
 		if err != nil {
-			return time.Time{}, err
+			return registry.ImageInfo{}, err
 		}
 	} else {
 		img, err = desc.Image()
 		if err != nil {
-			return time.Time{}, err
+			return registry.ImageInfo{}, err
 		}
 	}
 
 	cfg, err := img.ConfigFile()
 	if err != nil {
-		return time.Time{}, err
+		return registry.ImageInfo{}, err
 	}
-	return cfg.Created.Time, nil
+	return registry.ImageInfo{
+		Digest:  strings.TrimPrefix(desc.Digest.String(), "sha256:"),
+		Created: cfg.Created.Time,
+		Version: cfg.Config.Labels[ociVersionLabel],
+	}, nil
 }
+
+// ociVersionLabel is the OCI annotation/label carrying the packaged software version.
+const ociVersionLabel = "org.opencontainers.image.version"
 
 // pickPlatformChild prefers os/arch, else the first image manifest with a real
 // platform. Attestation manifests (platform unknown/unknown) are never chosen.

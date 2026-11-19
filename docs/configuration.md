@@ -43,6 +43,8 @@ Credentials and notifier endpoints are often injected via **`VERSENTRY_*` enviro
 | `health_max_age` | no | see below | Max age of health stamp for `versentry health` |
 | `min_age` | no | off | Notify only when the new image is at least this old in the registry — see [Minimum image age](#minimum-image-age-min_age) |
 | `remind_after` | no | off | `versentry run`: re-send an update you have not applied yet — see [Reminders](#reminders-remind_after) |
+| `heartbeat` | no | off | Ping an external monitor (Healthchecks.io, Uptime Kuma push, …) after each scheduled check — see [Heartbeat](#heartbeat-external-liveness) |
+| `jitter` | no | off | Random delay `[0, jitter)` before each scheduled check — see [Jitter](#jitter) |
 | `log_level` | no | `info` | `debug` / `info` / `warn` / `error` |
 
 ### Example skeleton
@@ -143,6 +145,8 @@ Unset or empty env leaves the YAML value as-is. All Versentry-specific variables
 | `VERSENTRY_APPRISE_USERNAME` | `username` on the `apprise` notifier |
 | `VERSENTRY_APPRISE_PASSWORD` | `password` on the `apprise` notifier |
 | `VERSENTRY_APPRISE_PROXY` | `proxy` on the `apprise` notifier |
+| `VERSENTRY_HEARTBEAT_URL` | `heartbeat.url` |
+| `VERSENTRY_HEARTBEAT_FAIL_URL` | `heartbeat.fail_url` |
 | `VERSENTRY_REGISTRY_USERNAME` | `username` on every configured `oci` registry |
 | `VERSENTRY_REGISTRY_TOKEN` | `token` on every configured `oci` registry |
 | `VERSENTRY_REGISTRY_PROXY` | `registry_proxy` (HTTP or `socks5://` for all registries) |
@@ -196,7 +200,7 @@ rules:
 
 **Pending** means: no notification and **no state write** — the container is re-checked every pass and notified once the candidate is old enough. Logged at INFO as `update pending … reason="1.4.3 is 1d4h old, min_age 3d"`; `check complete` counts `pending=N`. Applies to `versentry check` too.
 
-**Unknown age** (no timestamp, or `created` zeroed to 1970 by reproducible builds) is **not** delayed — min_age holds back only images the registry proves young (DEBUG `min_age: image has no build timestamp`).
+**Unknown age** (no timestamp, `created` zeroed to 1970 by reproducible builds, or a bogus `created` more than a day in the future) is **not** delayed — min_age holds back only images the registry proves young (DEBUG `min_age: image has no build timestamp` / `… is in the future`). A `created` slightly ahead of your clock (up to a day of skew) counts as brand new.
 
 **Registry errors** during the age lookup (timeout, 429, 5xx) skip the container for this pass, like any other registry failure.
 
@@ -365,6 +369,20 @@ Invalid cron → fail at startup.
 
 **Startup:** When the state file does not exist yet, `versentry run` performs one immediate check, then follows `interval` or cron `schedule`. Restarts with an existing state file wait for the next tick or slot. Use `versentry check`, `SIGUSR1`, or `SIGUSR2` for ad-hoc checks anytime.
 
+### Jitter
+
+Several hosts with the same `schedule` (or restarted together with the same `interval`) all query registries at the same second. `jitter` delays every scheduled check by a random time in `[0, jitter)`:
+
+```yaml
+schedule: "0 11 * * *"
+jitter: 30m          # checks start between 11:00 and 11:30; 0 or unset = off
+```
+
+- Only scheduled checks are delayed. The first check of a fresh install (no state file), `SIGUSR1`, `SIGUSR2`, and `versentry check` run immediately.
+- `SIGUSR1` during the wait cancels the delayed check (the forced one replaces it).
+- With `interval`, `jitter` must be shorter than `interval`; the next interval is counted from the end of the delayed check, so checks drift by up to `jitter` per cycle. With `schedule`, the cron slot stays fixed and only the start within it is randomised.
+- Log: INFO `scheduled check delayed by jitter delay=…` at each tick.
+
 ### TZ vs timezone
 
 Versentry uses **two different timezone knobs**. They are not duplicates and are separate from both fleet-policy precedence and `VERSENTRY_*` injection (see [Precedence](#precedence-two-different-mechanisms)).
@@ -405,6 +423,31 @@ Details: [Registries](registries.md).
 `versentry run` writes `{state-dir}/health` on startup, on a periodic heartbeat while the daemon runs, and after each successful scheduled pass. `versentry health` fails if the stamp is missing or older than `2×interval` (ticker mode), `2×cron interval` derived from `schedule` (cron mode), or `health_max_age` when set (always wins). With cron scheduling the heartbeat keeps the stamp fresh between daily checks so Docker HEALTHCHECK stays green while the process is up.
 
 See [Deployment](deployment.md) for Docker HEALTHCHECK.
+
+## Heartbeat (external liveness)
+
+The Docker HEALTHCHECK only marks the container `unhealthy` — nobody is told, and it cannot notice a dead host or a stopped container. A heartbeat closes that gap: after every scheduled check Versentry pings a URL of an external "dead man's switch" monitor, which alerts you through its own channels when the ping stops coming.
+
+```yaml
+heartbeat:
+  url: "https://hc-ping.com/<uuid>"           # or VERSENTRY_HEARTBEAT_URL
+  fail_url: "https://hc-ping.com/<uuid>/fail" # optional, or VERSENTRY_HEARTBEAT_FAIL_URL
+  # proxy: "socks5://…"
+  # timeout: 10s
+```
+
+| Monitor | `url` | `fail_url` |
+|---------|-------|-----------|
+| [Healthchecks.io](https://healthchecks.io) (or self-hosted) | `https://hc-ping.com/<uuid>` | `https://hc-ping.com/<uuid>/fail` |
+| [Uptime Kuma](https://github.com/louislam/uptime-kuma) push monitor | `https://kuma.example.com/api/push/<token>?status=up` | `https://kuma.example.com/api/push/<token>?status=down` |
+| Better Stack, Cronitor, … | the heartbeat / ping URL | the service's failure URL, if any |
+
+- **When:** after each scheduled check — cron / interval ticks, the initial check, and `SIGUSR1`. Not after `SIGUSR2` or `versentry check`.
+- **Success** → `url`. **Failure** → `fail_url`: the check could not run (e.g. Docker socket unreachable) **or any notifier failed** (you would not hear about updates). Registry skips and rate limits are normal noise and still count as success.
+- **No `fail_url`:** a failure sends nothing; the missed success ping alerts after the monitor's grace period.
+- **Body:** a one-line summary as `text/plain` POST, e.g. `versentry: checked=24 up-to-date=21 updates=2 pending=0 skipped=1 excluded=3 failed_notifiers=0` (Healthchecks shows it in the ping log; push monitors ignore it).
+- **Monitor settings:** period = your schedule (`0 11 * * *` → 1 day), grace ≥ `jitter` + typical check duration.
+- Ping problems are logged (`heartbeat ping failed`, two attempts) and never stop Versentry. The URLs are secrets (check UUID, push token): logs show the host only.
 
 ## Notifier failures
 

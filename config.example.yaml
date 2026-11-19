@@ -136,9 +136,9 @@ notifiers:
 #      VERSENTRY_APPRISE_USERNAME, VERSENTRY_APPRISE_PASSWORD, VERSENTRY_APPRISE_PROXY
 
 # --- Rules (optional) ---
-# Image axis: per-repo include filters, track: digest, min_age.
+# Image axis: per-repo include / exclude tag filters, track: digest, min_age.
 # A rule is the base for every container of that image; a container's own
-# versentry.include / versentry.track / versentry.min_age labels override it field by field
+# versentry.include / versentry.exclude / versentry.track / versentry.min_age labels override it field by field
 # (exclusion is the exception: see exclude_containers). See docs/rules.md.
 #
 # rules:
@@ -146,6 +146,8 @@ notifiers:
 #     include: "^17\\.\\d+-alpine3\\.\\d+$"
 #   - image: "chatwoot/chatwoot"
 #     include: "^v\\d+\\.\\d+\\.\\d+-ce$"
+#   - image: "example/app"
+#     exclude: "-(rc|beta)"   # drop matching tags (after include, if both are set)
 #   - image: "valkey/valkey"
 #     track: digest
 #   - image: "grafana/grafana"
@@ -179,6 +181,18 @@ interval: 12h
 # schedule: "0 12 * * *"
 # timezone: Europe/Paris
 # cron only; ignored with interval-only mode
+
+# --- Heartbeat (optional) ---
+# Ping an external monitor after each scheduled check so a silent/dead versentry
+# alerts you (Healthchecks.io, Uptime Kuma push, …). fail_url: check failed or a
+# notifier failed. URLs are secrets → prefer env VERSENTRY_HEARTBEAT_URL / _FAIL_URL.
+# heartbeat:
+#   url: "https://hc-ping.com/<uuid>"
+#   fail_url: "https://hc-ping.com/<uuid>/fail"
+
+# Random delay [0, jitter) before each scheduled check, so hosts on the same
+# schedule do not hit registries at once (initial check and signals: no delay).
+# jitter: 30m
 
 # --- Minimum image age (optional) ---
 # Notify only when the new image is at least this old in the registry

@@ -333,9 +333,10 @@ type agedMockRegistry struct {
 	createdFn    func(ctx context.Context, repo, tag string) (time.Time, error)
 }
 
-func (m *agedMockRegistry) ImageCreated(ctx context.Context, repo, tag string) (time.Time, error) {
+func (m *agedMockRegistry) ImageInfo(ctx context.Context, repo, tag string) (registry.ImageInfo, error) {
 	m.createdCalls.Add(1)
-	return m.createdFn(ctx, repo, tag)
+	created, err := m.createdFn(ctx, repo, tag)
+	return registry.ImageInfo{Created: created, Version: "v-" + tag}, err
 }
 
 func TestImageCreatedCachedPerTag(t *testing.T) {
@@ -382,5 +383,46 @@ func TestImageCreatedSkipsRateLimitedHost(t *testing.T) {
 	}
 	if reg.createdCalls.Load() != 0 {
 		t.Fatal("rate-limited host must not be called")
+	}
+}
+
+func TestImageInfoSharesCacheWithImageCreated(t *testing.T) {
+	built := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	reg := &agedMockRegistry{
+		mockRegistry: mockRegistry{host: "h"},
+		createdFn: func(ctx context.Context, repo, tag string) (time.Time, error) {
+			return built, nil
+		},
+	}
+	p := New(nil)
+	if _, ok := p.CachedImageInfo("h", "r", "latest"); ok {
+		t.Fatal("cache must start empty")
+	}
+	if _, err := p.ImageCreated(context.Background(), reg, "h", "r", "latest"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := p.ImageInfo(context.Background(), reg, "h", "r", "latest")
+	if err != nil || info.Version != "v-latest" || !info.Created.Equal(built) {
+		t.Fatalf("info = %+v, %v", info, err)
+	}
+	if cached, ok := p.CachedImageInfo("h", "r", "latest"); !ok || cached.Version != "v-latest" {
+		t.Fatalf("cached = %+v, %v", cached, ok)
+	}
+	if n := reg.createdCalls.Load(); n != 1 {
+		t.Fatalf("registry calls = %d, want 1 (min_age and notification share one lookup)", n)
+	}
+}
+
+func TestCachedImageInfoIgnoresFailedLookup(t *testing.T) {
+	reg := &agedMockRegistry{
+		mockRegistry: mockRegistry{host: "h"},
+		createdFn: func(ctx context.Context, repo, tag string) (time.Time, error) {
+			return time.Time{}, registry.ErrNotFound
+		},
+	}
+	p := New(nil)
+	_, _ = p.ImageInfo(context.Background(), reg, "h", "r", "t")
+	if _, ok := p.CachedImageInfo("h", "r", "t"); ok {
+		t.Fatal("failed lookup must not be served from cache as info")
 	}
 }

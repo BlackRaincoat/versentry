@@ -133,6 +133,8 @@ For a snappier Portainer UI in dev, override `interval` / `start_period` (e.g. `
 
 Stamp behavior: [Configuration — health stamp](configuration.md#health-stamp).
 
+**External alerting:** the HEALTHCHECK only changes the container status. To be alerted when Versentry stops checking (host down, container stopped, Docker socket gone, notifier broken), configure a [heartbeat](configuration.md#heartbeat-external-liveness) to Healthchecks.io or an Uptime Kuma push monitor.
+
 ## Signals
 
 <a id="signals"></a>

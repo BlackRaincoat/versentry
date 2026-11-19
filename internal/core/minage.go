@@ -22,6 +22,12 @@ const minAgeProbes = 5
 // builds) carry no age; treat anything before this as unknown.
 const minCreatedYear = 1980
 
+// maxCreatedSkew: a "created" up to this far ahead of our clock is registry/build
+// clock skew (age 0, brand new). Further ahead is a bogus timestamp: treating it
+// as new would keep the update pending until that date (2099 = forever), so it
+// counts as unknown, like a zeroed one.
+const maxCreatedSkew = 24 * time.Hour
+
 type pendingCandidate struct {
 	tag string
 	age time.Duration
@@ -106,9 +112,20 @@ func (e *Engine) candidateAge(
 		)
 		return 0, false, nil
 	}
-	age := e.now().Sub(created)
+	now := e.now()
+	if created.After(now.Add(maxCreatedSkew)) {
+		e.logOnce(slog.LevelDebug,
+			"min-age-future:"+parsed.Host+"/"+parsed.Repo+":"+tag,
+			"min_age: image build timestamp is in the future, not delayed",
+			"image", parsed.Repo,
+			"tag", tag,
+			"created", created.UTC().Format(time.RFC3339),
+		)
+		return 0, false, nil
+	}
+	age := now.Sub(created)
 	if age < 0 {
-		age = 0 // registry clock ahead of ours: treat as brand new
+		age = 0 // small clock skew between the build host and ours: brand new
 	}
 	return age, true, nil
 }

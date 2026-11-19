@@ -38,7 +38,7 @@ func TestSampleUpdatesCoverSemverAndDigest(t *testing.T) {
 	}
 
 	digestItem := format.ItemFromEvent("prod", batch[1], false)
-	if format.TrackingMode(batch[1]) != "digest" || !strings.HasPrefix(digestItem.Change, "digest changed: ") {
+	if format.TrackingMode(batch[1]) != "digest" || digestItem.Change != "1.27.2 → 1.27.3 (built 3 days ago)" {
 		t.Fatalf("digest item = %+v", digestItem)
 	}
 	if digestItem.URL == "" {

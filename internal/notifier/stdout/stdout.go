@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/BlackRaincoat/versentry/internal/model"
 	"github.com/BlackRaincoat/versentry/internal/notifier"
@@ -48,6 +49,15 @@ func (n *Notifier) logOne(event model.UpdateAvailable) {
 			"local", shortDigest(event.LocalDigest),
 			"remote", shortDigest(event.RemoteDigest),
 		}
+		if event.CurrentVersion != "" {
+			attrs = append(attrs, "current_version", event.CurrentVersion)
+		}
+		if event.LatestVersion != "" {
+			attrs = append(attrs, "latest_version", event.LatestVersion)
+		}
+	}
+	if !event.LatestCreated.IsZero() {
+		attrs = append(attrs, "built", event.LatestCreated.UTC().Format(time.RFC3339))
 	}
 	if event.Reminder {
 		attrs = append(attrs, "reminder", true)

@@ -14,6 +14,7 @@ import (
 // Label keys for per-container rules (same semantics as config rules[]).
 const (
 	labelInclude = "versentry.include"
+	labelExclude = "versentry.exclude"
 	labelTrack   = "versentry.track"
 	labelMode    = "versentry.mode" // deprecated alias for labelTrack
 	labelMinAge  = "versentry.min_age"
@@ -30,6 +31,7 @@ const RuleTrackAuto = "auto"
 type Rule struct {
 	Image   string
 	Include *regexp.Regexp // nil when unset (e.g. track-only digest rule)
+	Exclude *regexp.Regexp // nil when unset; drops matching registry tags
 	Track   string         // "" or RuleTrackDigest
 	MinAge  *time.Duration // nil = global min_age; 0 = off for this image (config rules only)
 	// Overridden lists config-rule fields replaced by container labels (ChainRuleResolver).
@@ -72,6 +74,14 @@ func NewConfigRuleResolver(rules []config.RuleConfig, log *slog.Logger) (*Config
 			}
 			re = compiled
 		}
+		var ex *regexp.Regexp
+		if rc.Exclude != "" {
+			compiled, err := regexp.Compile(rc.Exclude)
+			if err != nil {
+				return nil, fmt.Errorf("rules[%d]: invalid exclude regex: %w", i, err)
+			}
+			ex = compiled
+		}
 		track := config.EffectiveRuleTrack(rc)
 		var minAge *time.Duration
 		if rc.MinAge != nil {
@@ -81,6 +91,7 @@ func NewConfigRuleResolver(rules []config.RuleConfig, log *slog.Logger) (*Config
 		byImage[rc.Image] = &Rule{
 			Image:   rc.Image,
 			Include: re,
+			Exclude: ex,
 			Track:   track,
 			MinAge:  minAge,
 		}
@@ -121,33 +132,40 @@ func (r *LabelRuleResolver) RuleFor(q RuleQuery) *Rule {
 		return nil
 	}
 
-	var include *regexp.Regexp
-	if raw := q.Labels[labelInclude]; raw != "" {
-		re, err := regexp.Compile(raw)
-		if err != nil {
-			r.log.Warn("invalid versentry.include label, ignoring",
-				"container", q.Container,
-				"image", q.Image,
-				"include", raw,
-				"error", err,
-			)
-		} else {
-			include = re
-		}
-	}
-
+	include := labelRegex(r.log, q, labelInclude, "include")
+	exclude := labelRegex(r.log, q, labelExclude, "exclude")
 	track := resolveLabelTrack(r.log, q, q.Labels[labelTrack], q.Labels[labelMode])
 	minAge := resolveLabelMinAge(r.log, q, q.Labels[labelMinAge])
 
-	if include == nil && track == "" && minAge == nil {
+	if include == nil && exclude == nil && track == "" && minAge == nil {
 		return nil
 	}
 	return &Rule{
 		Image:   q.Image,
 		Include: include,
+		Exclude: exclude,
 		Track:   track,
 		MinAge:  minAge,
 	}
+}
+
+// labelRegex compiles a regex label; invalid values log WARN and are ignored.
+func labelRegex(log *slog.Logger, q RuleQuery, key, field string) *regexp.Regexp {
+	raw := q.Labels[key]
+	if raw == "" {
+		return nil
+	}
+	re, err := regexp.Compile(raw)
+	if err != nil {
+		log.Warn("invalid "+key+" label, ignoring",
+			"container", q.Container,
+			"image", q.Image,
+			field, raw,
+			"error", err,
+		)
+		return nil
+	}
+	return re
 }
 
 func resolveLabelTrack(log *slog.Logger, q RuleQuery, trackRaw, modeRaw string) string {
@@ -260,6 +278,12 @@ func (c *ChainRuleResolver) RuleFor(q RuleQuery) *Rule {
 			}
 			merged.Include = rule.Include
 		}
+		if rule.Exclude != nil {
+			if merged.Exclude != nil {
+				merged.Overridden = append(merged.Overridden, "exclude")
+			}
+			merged.Exclude = rule.Exclude
+		}
 		if rule.Track != "" {
 			// Count it only when detection actually changes: "auto" is the default,
 			// so auto over a rule without track: digest changes nothing.
@@ -276,6 +300,17 @@ func (c *ChainRuleResolver) RuleFor(q RuleQuery) *Rule {
 		}
 	}
 	return merged
+}
+
+// excludeTags drops tags that match the exclude regex.
+func excludeTags(tags []string, exclude *regexp.Regexp) []string {
+	out := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if !exclude.MatchString(tag) {
+			out = append(out, tag)
+		}
+	}
+	return out
 }
 
 // filterTags keeps only tags that match the include regex.

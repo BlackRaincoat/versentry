@@ -56,9 +56,12 @@ type Engine struct {
 	excludeContainers map[string]struct{} // exclude_containers set; absent → label only
 	warnOnceKeys      sync.Map            // one-time diagnostic WARN keys for this process
 	minAge            time.Duration       // global min_age (0 = off); rules may override
+	lastStats         PassStats           // counts of the last RunOnce (heartbeat summary)
 	optIn             bool                // watch_by_default: false — only watch_containers / versentry.watch=true
 	watchContainers   map[string]struct{} // watch_containers (opt-in by name)
 	now               func() time.Time    // clock for min_age (tests)
+	lastPass          *registrypass.Pass  // registry cache of the last RunOnce (DescribeUpdates)
+	describeLookups   int                 // DescribeUpdates registry lookups in lastPass
 }
 
 // NewEngine wires the core check loop.
@@ -85,6 +88,16 @@ func NewEngine(
 		excludeContainers: excludeContainers,
 		now:               time.Now,
 	}
+}
+
+// PassStats are the per-pass counts logged as "check complete".
+type PassStats struct {
+	Checked, UpToDate, Updates, Pending, Skipped, Excluded int
+}
+
+// LastStats returns the counts of the most recent RunOnce.
+func (e *Engine) LastStats() PassStats {
+	return e.lastStats
 }
 
 // SetWatchByDefault sets the watch policy: true (default) checks every container
@@ -146,6 +159,7 @@ func (e *Engine) RunOnce(ctx context.Context) ([]model.UpdateAvailable, []string
 	)
 
 	pass := registrypass.New(e.log)
+	e.lastPass, e.describeLookups = pass, 0
 
 	var checked, upToDate, updates, skipped, pending int
 	found := make([]model.UpdateAvailable, 0)
@@ -193,6 +207,10 @@ func (e *Engine) RunOnce(ctx context.Context) ([]model.UpdateAvailable, []string
 		e.logContainerResult(result)
 	}
 
+	e.lastStats = PassStats{
+		Checked: checked, UpToDate: upToDate, Updates: updates,
+		Pending: pending, Skipped: skipped, Excluded: excluded,
+	}
 	e.log.Info(
 		"check complete",
 		"checked", checked,
@@ -260,6 +278,14 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 		tags = filterTags(tags, rule.Include)
 		if len(tags) == 0 {
 			return e.skipped(base, "no tags match include rule"), nil
+		}
+	}
+	// exclude drops candidates after include; the running tag itself is not
+	// filtered (a container on 1.0-rc1 still sees newer non-excluded tags).
+	if rule != nil && rule.Exclude != nil {
+		tags = excludeTags(tags, rule.Exclude)
+		if len(tags) == 0 {
+			return e.skipped(base, "no tags left after exclude rule"), nil
 		}
 	}
 
@@ -413,7 +439,7 @@ func (e *Engine) checkDigest(
 	base := containerResult{Container: c, ImageRef: c.ImageRef, CurrentTag: parsed.Tag}
 
 	localCtx, cancel := context.WithTimeout(ctx, e.timeouts.Provider.Duration)
-	localDigest, err := e.provider.LocalDigest(localCtx, c, parsed.Repo)
+	localDigest, err := e.provider.LocalDigest(localCtx, c, parsed.Host, parsed.Repo)
 	cancel()
 	if err != nil || localDigest == "" {
 		return e.skipped(base, "no local digest (locally built or not pulled from registry)"), nil

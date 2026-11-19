@@ -14,13 +14,16 @@ import (
 
 type modeTestProvider struct {
 	localDigest string
+	gotHost     string
+	gotRepo     string
 }
 
 func (p *modeTestProvider) ListRunning(ctx context.Context) ([]model.Container, error) {
 	return nil, nil
 }
 
-func (p *modeTestProvider) LocalDigest(ctx context.Context, c model.Container, repo string) (string, error) {
+func (p *modeTestProvider) LocalDigest(ctx context.Context, c model.Container, host, repo string) (string, error) {
+	p.gotHost, p.gotRepo = host, repo
 	return p.localDigest, nil
 }
 
@@ -58,8 +61,9 @@ func TestModeDigestPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	prov := &modeTestProvider{localDigest: "sha256:localaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 	eng := NewEngine(
-		&modeTestProvider{localDigest: "sha256:localaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		prov,
 		nil,
 		config.Timeouts{},
 		slog.Default(),
@@ -72,6 +76,9 @@ func TestModeDigestPath(t *testing.T) {
 	result, err := eng.checkContainer(context.Background(), c, registrypass.New(slog.Default()))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if prov.gotHost != imageref.DockerHubHost || prov.gotRepo != "valkey/valkey" {
+		t.Fatalf("LocalDigest got %s/%s, want registry host and repo", prov.gotHost, prov.gotRepo)
 	}
 	if reg.listCalls != 0 {
 		t.Fatalf("ListTags calls = %d, want 0 (forced digest)", reg.listCalls)

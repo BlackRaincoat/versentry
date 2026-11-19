@@ -311,7 +311,7 @@ func TestNetworkErrorDoesNotLeakToken(t *testing.T) {
 			t.Fatalf("leaked webhook path/token: %s", s)
 		}
 	}
-	if !strings.Contains(err.Error(), `"https://discord.com"`) || !strings.Contains(err.Error(), "connection refused") {
+	if !strings.Contains(err.Error(), "Post https://discord.com:") || !strings.Contains(err.Error(), "connection refused") {
 		t.Fatalf("expected host and cause in error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "attempt failed, retrying") {

@@ -21,11 +21,22 @@ type Registry interface {
 	ListTags(ctx context.Context, repo string) ([]string, error)
 }
 
-// ImageCreatedReader is optionally implemented by registries that can report
-// when the image behind repo:tag was built (config blob "created"). Used by
-// min_age. A zero time means the registry had no usable timestamp.
-type ImageCreatedReader interface {
-	ImageCreated(ctx context.Context, repo, tag string) (time.Time, error)
+// ImageInfo describes the image behind a tag, read from its config blob.
+type ImageInfo struct {
+	// Digest is the tag's top-level manifest digest (index for multi-arch),
+	// hex without "sha256:" — the same value TagDigest returns.
+	Digest string
+	// Created is the config blob "created"; zero when the image has none.
+	Created time.Time
+	// Version is the org.opencontainers.image.version label; empty when unset.
+	Version string
+}
+
+// ImageInfoReader is optionally implemented by registries that can read an
+// image's config blob. Used by min_age (Created) and to describe digest
+// updates in notifications (Version, Created).
+type ImageInfoReader interface {
+	ImageInfo(ctx context.Context, repo, tag string) (ImageInfo, error)
 }
 
 // Factory constructs a Registry from plugin-specific configuration.
