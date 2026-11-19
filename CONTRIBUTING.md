@@ -15,7 +15,7 @@ Out of scope by design: web UI, auto-update / Watchtower-style actions, in-app c
 
 ## Development setup
 
-Requirements: **Go 1.25+**, Docker (for integration with the local socket when testing manually).
+Requirements: **Go 1.26+**, Docker (for integration with the local socket when testing manually).
 
 ```bash
 git clone https://github.com/BlackRaincoat/versentry.git

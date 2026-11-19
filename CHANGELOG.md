@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follo
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-11-20
+
+### Security
+
+- Update `github.com/klauspost/compress` to v1.20.2 ([GO-2026-6865](https://pkg.go.dev/vuln/GO-2026-6865): panic on malformed zstd frames), a dependency of `go-containerregistry`. Versentry reads only manifests and config blobs, not image layers, but the vulnerable code is linked into the binary.
+- Update `golang.org/x/net` to v0.62.0 (GO-2026-6603, GO-2026-6610, GO-2026-6611, GO-2026-6612, GO-2026-6617, GO-2026-6860, GO-2026-6866). govulncheck found no path from Versentry's code to them.
+- Images are built with Go 1.27 (latest patch at build time) instead of 1.25, which no longer receives security fixes. Building from source now needs Go 1.26 or newer.
+
 ## [1.6.0] - 2026-11-20
 
 ### Added
@@ -197,6 +205,7 @@ First public release.
 - Multi-arch Docker image (amd64, arm64)
 - `VERSENTRY_*` environment variable overrides for secrets and paths
 
+[1.6.1]: https://github.com/BlackRaincoat/versentry/releases/tag/1.6.1
 [1.6.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.6.0
 [1.5.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.5.0
 [1.4.1]: https://github.com/BlackRaincoat/versentry/releases/tag/1.4.1

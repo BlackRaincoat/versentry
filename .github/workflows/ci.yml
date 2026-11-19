@@ -13,12 +13,12 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          # Floating minor — same policy as Dockerfile ARG GO_VERSION=1.25
-          # (latest 1.25.x patch). Do not use go-version-file: go.mod (that pins
-          # the language minimum 1.25.0 and diverges from the image toolchain).
-          # check-latest: without it, a runner-preinstalled/cached 1.25.x can
+          # Floating minor — same policy as Dockerfile ARG GO_VERSION=1.27
+          # (latest 1.27.x patch). Do not use go-version-file: go.mod (that pins
+          # the language minimum 1.26.0 and diverges from the image toolchain).
+          # check-latest: without it, a runner-preinstalled/cached 1.27.x can
           # lag Hub; govulncheck then flags stdlib CVEs the image does not have.
-          go-version: "1.25"
+          go-version: "1.27"
           check-latest: true
           cache: true
 
