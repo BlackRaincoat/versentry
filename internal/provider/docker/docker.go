@@ -64,10 +64,17 @@ func (p *Provider) ListRunning(ctx context.Context) ([]model.Container, error) {
 
 		labels := p.labelsForContainer(ctx, c.ImageID, c.Labels, imageLabels)
 
+		ref := c.Image
+		if listedByID(ref, c.ImageID) {
+			if configured, ok := p.configuredImage(ctx, c.ID, c.ImageID); ok {
+				ref = configured
+			}
+		}
+
 		out = append(out, model.Container{
 			ID:       c.ID,
 			Name:     name,
-			ImageRef: c.Image,
+			ImageRef: ref,
 			Labels:   labels,
 		})
 	}
@@ -135,14 +142,9 @@ func mergeLabels(imgLabels, containerLabels map[string]string) map[string]string
 // image pulled from both docker.io/acme/app and ghcr.io/acme/app carries one
 // entry per registry, and their digests can differ.
 func (p *Provider) LocalDigest(ctx context.Context, c model.Container, host, repo string) (string, error) {
-	inspect, err := p.client.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})
+	img, err := p.containerImage(ctx, c)
 	if err != nil {
-		return "", fmt.Errorf("inspect container %s: %w", c.ID, err)
-	}
-
-	img, err := p.client.ImageInspect(ctx, inspect.Container.Image)
-	if err != nil {
-		return "", fmt.Errorf("inspect image for container %s: %w", c.Name, err)
+		return "", err
 	}
 
 	for _, repoDigest := range img.RepoDigests {
@@ -160,4 +162,55 @@ func (p *Provider) LocalDigest(ctx context.Context, c model.Container, host, rep
 	// No registry manifest digest in RepoDigests (locally built or not pulled from a registry).
 	// Do not fall back to image ID — it is not comparable to a registry tag digest.
 	return "", fmt.Errorf("no registry digest for %s/%s on container %s", host, repo, c.Name)
+}
+
+// LocalImage reports the ID and layer diff IDs of the image the container runs.
+func (p *Provider) LocalImage(ctx context.Context, c model.Container) (provider.LocalImage, error) {
+	img, err := p.containerImage(ctx, c)
+	if err != nil {
+		return provider.LocalImage{}, err
+	}
+	return provider.LocalImage{ID: img.ID, Layers: img.RootFS.Layers}, nil
+}
+
+// containerImage inspects the image the container was created from (by ID, so
+// a re-tagged or re-pulled image name does not change the answer).
+func (p *Provider) containerImage(ctx context.Context, c model.Container) (client.ImageInspectResult, error) {
+	inspect, err := p.client.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})
+	if err != nil {
+		return client.ImageInspectResult{}, fmt.Errorf("inspect container %s: %w", c.ID, err)
+	}
+	img, err := p.client.ImageInspect(ctx, inspect.Container.Image)
+	if err != nil {
+		return client.ImageInspectResult{}, fmt.Errorf("inspect image for container %s: %w", c.Name, err)
+	}
+	return img, nil
+}
+
+// listedByID reports a container list entry whose Image is the image ID, not
+// a name. Docker does that when the tag the container was created from now
+// points to another image — typically `docker pull` / `compose pull` without
+// recreating the container, exactly the case that has an update to report.
+func listedByID(image, imageID string) bool {
+	if strings.HasPrefix(image, "sha256:") {
+		return true
+	}
+	id := strings.TrimPrefix(imageID, "sha256:")
+	return len(image) >= 12 && id != "" && strings.HasPrefix(id, image)
+}
+
+// configuredImage returns the image reference the container was created with
+// (Config.Image, e.g. "traefik/whoami:latest"), which Docker keeps after the
+// tag moves. False when inspect fails or the container was itself started by
+// ID — then it stays a bare digest and is skipped as before.
+func (p *Provider) configuredImage(ctx context.Context, containerID, imageID string) (string, bool) {
+	inspect, err := p.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	if err != nil || inspect.Container.Config == nil {
+		return "", false
+	}
+	ref := inspect.Container.Config.Image
+	if ref == "" || listedByID(ref, imageID) {
+		return "", false
+	}
+	return ref, true
 }

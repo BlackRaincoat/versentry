@@ -6,6 +6,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versioning follo
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-23
+
+### Added
+
+- `ignore_rebuilds` (global, `rules[]`, label `versentry.ignore_rebuilds`): with digest tracking, a new image whose `org.opencontainers.image.version` equals the running one's is not reported — a rebuild without a release. Images without the label are reported as before. One lookup (a Docker Hub pull) per moved tag, at most 5 per check, remembered while the tag points to that image.
+- Digest updates whose versions are both semver get a `bump` (`major` / `minor` / `patch`, also in webhook JSON and `{{.Bump}}`) like tag updates, and a new major is marked: `2.9.1 → 3.0.0 (major)`.
+
+### Changed
+
+- `update pending` (min_age) also says when the update becomes available: `reason="1.4.3 is 1d4h old, min_age 3d, eligible 2026-11-22 09:15"`.
+- Outbound requests identify as Versentry: `User-Agent: versentry/<version>` for notifiers and heartbeat, `versentry/<version> go-containerregistry/<version>` for registries (previously the Go and library defaults). No host or instance name is included.
+
+### Fixed
+
+- Digest tracking no longer reports an update when a multi-arch tag moved only because the publisher rebuilt another architecture or attached an attestation. When the index digest changes, the layers of the running image are compared with this platform's image in the registry; identical layers are not an update. The lookup is one Docker Hub pull, capped at 5 per check and remembered while the tag points to that image; if it fails, the change is reported as before. A configuration-only change (labels, command) on identical layers is no longer reported.
+- A container whose image was pulled again without recreating it (`docker pull` / `docker compose pull` without `up -d`) is checked again. Docker then lists it by image ID instead of the image name, and Versentry skipped it silently — no notifications or reminders for exactly the container still running the old image. The image name is now taken from the container's configuration. A container really started by image ID is still skipped.
+- Log values containing invisible or control characters (bidirectional overrides such as U+202E, zero-width characters, DEL, C1 controls) are now quoted and escaped, so a container or label value cannot reverse or hide part of a log line. Printable non-ASCII text (e.g. Cyrillic) stays unquoted.
+
 ## [1.6.1] - 2026-11-20
 
 ### Security
@@ -205,6 +223,7 @@ First public release.
 - Multi-arch Docker image (amd64, arm64)
 - `VERSENTRY_*` environment variable overrides for secrets and paths
 
+[1.7.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.7.0
 [1.6.1]: https://github.com/BlackRaincoat/versentry/releases/tag/1.6.1
 [1.6.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.6.0
 [1.5.0]: https://github.com/BlackRaincoat/versentry/releases/tag/1.5.0

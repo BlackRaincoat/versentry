@@ -18,7 +18,8 @@ type UpdateAvailable struct {
 	Repo       string
 	CurrentTag string
 	LatestTag  string
-	// Bump is major|minor|patch for semver/numeric tag updates; empty for digest.
+	// Bump is major|minor|patch for semver/numeric tag updates, and for digest
+	// updates whose OCI versions both parse as semver; empty otherwise.
 	Bump         string
 	LocalDigest  string
 	RemoteDigest string

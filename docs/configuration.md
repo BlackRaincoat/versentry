@@ -42,6 +42,7 @@ Credentials and notifier endpoints are often injected via **`VERSENTRY_*` enviro
 | `registry_proxy` | no | — | HTTP/SOCKS5 proxy for all registry API calls — see [Registries](registries.md) |
 | `health_max_age` | no | see below | Max age of health stamp for `versentry health` |
 | `min_age` | no | off | Notify only when the new image is at least this old in the registry — see [Minimum image age](#minimum-image-age-min_age) |
+| `ignore_rebuilds` | no | `false` | Digest tracking: do not report a new image with the same OCI version as the running one — see [Ignore rebuilds](#ignore-rebuilds-ignore_rebuilds) |
 | `remind_after` | no | off | `versentry run`: re-send an update you have not applied yet — see [Reminders](#reminders-remind_after) |
 | `heartbeat` | no | off | Ping an external monitor (Healthchecks.io, Uptime Kuma push, …) after each scheduled check — see [Heartbeat](#heartbeat-external-liveness) |
 | `jitter` | no | off | Random delay `[0, jitter)` before each scheduled check — see [Jitter](#jitter) |
@@ -198,7 +199,7 @@ rules:
 | Semver / numeric | Try the next older newer-than-current version (up to 5 lookups per container per pass). The newest one that is old enough is notified — `1.4.0 → 1.4.2` while `1.4.3` is 1 day old. If none qualifies: **pending**. |
 | Digest | The tag's current image is the only candidate: **pending** until it is old enough. |
 
-**Pending** means: no notification and **no state write** — the container is re-checked every pass and notified once the candidate is old enough. Logged at INFO as `update pending … reason="1.4.3 is 1d4h old, min_age 3d"`; `check complete` counts `pending=N`. Applies to `versentry check` too.
+**Pending** means: no notification and **no state write** — the container is re-checked every pass and notified once the candidate is old enough. Logged at INFO as `update pending … reason="1.4.3 is 1d4h old, min_age 3d, eligible 2026-11-22 09:15"` — `eligible` is when the image reaches `min_age` (in the process time zone, like log timestamps); the notification goes out at the first check after that; `check complete` counts `pending=N`. Applies to `versentry check` too.
 
 **Unknown age** (no timestamp, `created` zeroed to 1970 by reproducible builds, or a bogus `created` more than a day in the future) is **not** delayed — min_age holds back only images the registry proves young (DEBUG `min_age: image has no build timestamp` / `… is in the future`). A `created` slightly ahead of your clock (up to a day of skew) counts as brand new.
 
@@ -209,6 +210,26 @@ rules:
 **Frequently rebuilt tags:** a digest-tracked tag rebuilt more often than `min_age` (nightly `latest`) never gets old enough, so it would stay pending forever. Set `min_age: 0` on that image's rule.
 
 **Per-image rules:** `rules[].min_age` overrides the global value (`0` turns it off). For one container, the label `versentry.min_age` (`3d`, `36h`, `0` = off) overrides both; `versentry.include` / `versentry.track` override a rule's `include` / `track` and inherit its `min_age` — see [Rules](rules.md#two-sources-priority).
+
+## Ignore rebuilds (`ignore_rebuilds`)
+
+A floating tag (`latest`, `stable`, or any image with `track: digest`) moves on every rebuild of the image — a new base image, a security patch in a dependency — not only on a new release. When both the running image and the new one carry the standard `org.opencontainers.image.version` label, Versentry can tell the two apart:
+
+```yaml
+ignore_rebuilds: true        # global; default false
+
+rules:
+  - image: "example/app"
+    ignore_rebuilds: false   # this image: report rebuilds too
+```
+
+- **Same version** (`2.3.1` → `2.3.1`): not reported. DEBUG `container checked … reason="digest changed, same version (ignore_rebuilds)"`.
+- **New version** (`2.3.1` → `2.4.0`): reported as usual.
+- **No label** on either image: reported as before — without versions there is nothing to compare.
+
+Only digest tracking is affected; tag updates (`1.2.3 → 1.2.4`) always compare versions. `rules[].ignore_rebuilds` overrides the global value for an image, and the label `versentry.ignore_rebuilds` (`true` / `false`) overrides both for one container — see [Rules](rules.md#two-sources-priority).
+
+**Cost:** reading the new image's version is one manifest `GET` (a Docker Hub pull) when the tag moved, at most 5 per check. The result is remembered while the tag points to that image, so it is not repeated every check, and the notification reuses it. With [`min_age`](#minimum-image-age-min_age) the same lookup serves both. If the lookup fails, the change is reported.
 
 ## Addressing axes (image vs container)
 

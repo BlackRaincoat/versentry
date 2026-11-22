@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/BlackRaincoat/versentry/internal/model"
+	"github.com/BlackRaincoat/versentry/internal/netutil"
 	"github.com/BlackRaincoat/versentry/internal/notifier"
 	"github.com/BlackRaincoat/versentry/internal/notifier/format"
 	"github.com/BlackRaincoat/versentry/internal/notifier/httpretry"
@@ -112,7 +113,7 @@ func New(cfg map[string]any) (notifier.Notifier, error) {
 		return nil, err
 	}
 
-	client := &http.Client{Timeout: timeout}
+	client := &http.Client{Timeout: timeout, Transport: netutil.WithUserAgent(nil)}
 
 	return &Notifier{
 		endpoint:     endpoint,

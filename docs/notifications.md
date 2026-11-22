@@ -408,7 +408,7 @@ Shared field builders live in `internal/notifier/format` (`ItemData`, `Payload`)
 | `{{.CurrentTag}}` | Current tag (same value as `Tag`) |
 | `{{.LatestTag}}` | Newer tag (empty for digest-only updates) |
 | `{{.Host}}` | Registry host |
-| `{{.Bump}}` | `major` / `minor` / `patch` for tag updates; empty for digest. Optional — old templates that omit it keep working. Default text only appends ` (major)` to `Change` for cross-major. |
+| `{{.Bump}}` | `major` / `minor` / `patch` for tag updates, and for digest updates whose versions (see [Version and build time](#version-and-build-time)) are both semver; empty otherwise. Optional — old templates that omit it keep working. Default text only appends ` (major)` to `Change` for cross-major. |
 | `{{.Reminder}}` | `true` when this is a [`remind_after`](configuration.md#reminders-remind_after) repeat of an already-notified update. Default `Change` text already ends with ` (reminder)`. |
 | `{{.CurrentVersion}}` / `{{.LatestVersion}}` | OCI version labels of the running and the new image (digest updates); empty when unknown — see [Version and build time](#version-and-build-time) |
 | `{{.Built}}` | Age of the new image (`3 days ago`); empty when unknown |
@@ -427,15 +427,18 @@ A digest update (a floating tag such as `latest` was rebuilt) says nothing usefu
 
 ```
 app: 2.3.1 → 2.4.0 (built 3 days ago)
+app: 2.9.1 → 3.0.0 (major) (built 2 days ago)
 app: 2.3.1 rebuilt (built 1 day ago)
 ```
 
+When both versions are semver, the update gets a `bump` (`major` / `minor` / `patch`) like a tag update, and a new major is marked ` (major)`. Rebuilds without a version change (`2.3.1 rebuilt`) can be silenced with [`ignore_rebuilds`](configuration.md#ignore-rebuilds-ignore_rebuilds).
+
 - **Current version** comes from the running image's labels — no registry request.
-- **New version and build time** come from the new image's config in the registry. With [`min_age`](configuration.md#minimum-image-age-min_age) this is the lookup already made, so it costs nothing. Otherwise it is one request (counted as a pull by Docker Hub), made only for updates actually being sent — not for ones suppressed by state — and at most 5 per check; beyond that, updates show digests.
+- **New version and build time** come from the new image's config in the registry. With [`min_age`](configuration.md#minimum-image-age-min_age), [`ignore_rebuilds`](configuration.md#ignore-rebuilds-ignore_rebuilds), or the [multi-arch layer check](registries.md) this is the lookup already made, so it costs nothing. Otherwise it is one request (counted as a pull by Docker Hub), made only for updates actually being sent — not for ones suppressed by state — and at most 5 per check; beyond that, updates show digests.
 - Tag updates keep their tags; they get the build time only when `min_age` already looked it up.
 - Images without the label (most Docker Official Images: `postgres`, `nginx`, `redis`) show digests as before. Label values that are not a plain version string are ignored.
 
-Detection and notification state are unchanged: the update is still the digest.
+Notification state is unchanged: the update is still the digest.
 
 ## Default Telegram templates
 

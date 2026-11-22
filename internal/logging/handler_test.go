@@ -3,6 +3,7 @@ package logging
 import (
 	"bytes"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -86,5 +87,48 @@ func TestTextHandlerQuotesInvalidUTF8(t *testing.T) {
 	}
 	if !strings.HasPrefix(lines[1], "2026-08-18 11:00:29 WARN second") {
 		t.Fatalf("next line must start with timestamp, got %q", lines[1])
+	}
+}
+
+func TestTextHandlerQuotesNonPrintable(t *testing.T) {
+	cases := map[string]string{
+		"bidi override":  "app\u202etxt.exe",
+		"bidi isolate":   "app\u2066x",
+		"zero width":     "ng\u200binx",
+		"DEL":            "app\x7f",
+		"C1 control":     "app\u0085x",
+		"BOM":            "\xef\xbb\xbfapp",
+		"line separator": "a\u2028b",
+	}
+	for name, v := range cases {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			h := NewHandler(&buf, slog.LevelInfo)
+			r := slog.NewRecord(time.Now(), slog.LevelInfo, "m", 0)
+			r.AddAttrs(slog.String("label", v))
+			if err := h.Handle(t.Context(), r); err != nil {
+				t.Fatal(err)
+			}
+			got := buf.String()
+			if strings.Contains(got, v) {
+				t.Fatalf("raw value leaked into the line: %q", got)
+			}
+			if want := "label=" + strconv.Quote(v); !strings.Contains(got, want) {
+				t.Fatalf("got %q, want substring %q", got, want)
+			}
+		})
+	}
+}
+
+func TestTextHandlerKeepsPrintableUnicodeUnquoted(t *testing.T) {
+	var buf bytes.Buffer
+	h := NewHandler(&buf, slog.LevelInfo)
+	r := slog.NewRecord(time.Now(), slog.LevelInfo, "m", 0)
+	r.AddAttrs(slog.String("instance", "сервер-1"), slog.String("change", "2.3.1→2.4.0"))
+	if err := h.Handle(t.Context(), r); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); !strings.Contains(got, "instance=сервер-1 ") || !strings.Contains(got, "change=2.3.1→2.4.0") {
+		t.Fatalf("printable Unicode must stay unquoted: %q", got)
 	}
 }

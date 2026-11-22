@@ -97,8 +97,15 @@ func TestValidateRulesEmptyIncludeWithoutTrackFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected include required error")
 	}
-	if !strings.Contains(err.Error(), "include, exclude, track: digest, or min_age is required") {
+	if !strings.Contains(err.Error(), "include, exclude, track: digest, min_age, or ignore_rebuilds is required") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateRulesIgnoreRebuildsAlone(t *testing.T) {
+	off := false
+	if err := validateRules([]RuleConfig{{Image: "org/app", IgnoreRebuilds: &off}}); err != nil {
+		t.Fatalf("ignore_rebuilds alone (even false, to undo the global) must be a valid rule: %v", err)
 	}
 }
 

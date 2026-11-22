@@ -136,9 +136,10 @@ notifiers:
 #      VERSENTRY_APPRISE_USERNAME, VERSENTRY_APPRISE_PASSWORD, VERSENTRY_APPRISE_PROXY
 
 # --- Rules (optional) ---
-# Image axis: per-repo include / exclude tag filters, track: digest, min_age.
+# Image axis: per-repo include / exclude tag filters, track: digest, min_age, ignore_rebuilds.
 # A rule is the base for every container of that image; a container's own
-# versentry.include / versentry.exclude / versentry.track / versentry.min_age labels override it field by field
+# versentry.include / versentry.exclude / versentry.track / versentry.min_age /
+# versentry.ignore_rebuilds labels override it field by field
 # (exclusion is the exception: see exclude_containers). See docs/rules.md.
 #
 # rules:
@@ -152,6 +153,8 @@ notifiers:
 #     track: digest
 #   - image: "grafana/grafana"
 #     min_age: 7d        # per-image override of the global min_age (0 = off)
+#   - image: "example/nightly"
+#     ignore_rebuilds: true   # digest updates only when the OCI version changes
 # floating tag rebuilds (e.g. 9-alpine), not semver "newer"
 
 # --- Exclude containers (optional) ---
@@ -200,6 +203,13 @@ interval: 12h
 # Semver: a too-young newest version falls back to the newest old-enough one.
 # See docs/configuration.md#minimum-image-age-min_age.
 # min_age: 3d
+
+# --- Ignore rebuilds (optional) ---
+# Digest tracking (latest, stable, track: digest): stay silent when the new image
+# carries the same org.opencontainers.image.version as the running one — a rebuild
+# without a release. Images without that label are reported as before.
+# See docs/configuration.md#ignore-rebuilds-ignore_rebuilds.
+# ignore_rebuilds: true
 
 # --- Reminders (optional, versentry run) ---
 # Re-send an update you have not applied yet, marked "(reminder)".

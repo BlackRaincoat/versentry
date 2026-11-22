@@ -32,7 +32,8 @@ type ItemData struct {
 	CurrentTag string
 	LatestTag  string
 	Host       string
-	// Bump is major|minor|patch for tag updates; empty for digest. Optional in templates.
+	// Bump is major|minor|patch for tag updates and for digest updates with
+	// semver OCI versions; empty otherwise. Optional in templates.
 	Bump string
 	// Reminder is true when this target was notified before (remind_after).
 	Reminder bool
@@ -155,7 +156,8 @@ func TrackingMode(event model.UpdateAvailable) string {
 }
 
 // ChangeText formats the human-readable change line.
-// Cross-major tag updates append " (major)"; minor/patch stay unmarked.
+// Cross-major updates (tags, or OCI versions of a digest update) append
+// " (major)"; minor/patch stay unmarked.
 // Digest updates show OCI versions when known ("2.3.1 → 2.4.0", "2.3.1 rebuilt",
 // "new image 2.4.0"), else the two short digests. A known build time appends
 // " (built 3 days ago)"; a remind_after re-notification appends " (reminder)".
@@ -178,6 +180,9 @@ func ChangeText(event model.UpdateAvailable, escapeHTML bool) string {
 			s = latest + " rebuilt"
 		default:
 			s = escape(event.CurrentVersion, escapeHTML) + " → " + latest
+			if event.Bump == model.BumpMajor {
+				s += " (major)"
+			}
 		}
 	default:
 		s = "digest changed: " +

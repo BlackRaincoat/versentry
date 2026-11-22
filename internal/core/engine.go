@@ -53,15 +53,19 @@ type Engine struct {
 	tagSelector       TagSelector
 	ruleSelector      TagSelector
 	rules             RuleResolver
-	excludeContainers map[string]struct{} // exclude_containers set; absent → label only
-	warnOnceKeys      sync.Map            // one-time diagnostic WARN keys for this process
-	minAge            time.Duration       // global min_age (0 = off); rules may override
-	lastStats         PassStats           // counts of the last RunOnce (heartbeat summary)
-	optIn             bool                // watch_by_default: false — only watch_containers / versentry.watch=true
-	watchContainers   map[string]struct{} // watch_containers (opt-in by name)
-	now               func() time.Time    // clock for min_age (tests)
-	lastPass          *registrypass.Pass  // registry cache of the last RunOnce (DescribeUpdates)
-	describeLookups   int                 // DescribeUpdates registry lookups in lastPass
+	excludeContainers map[string]struct{}           // exclude_containers set; absent → label only
+	warnOnceKeys      sync.Map                      // one-time diagnostic WARN keys for this process
+	minAge            time.Duration                 // global min_age (0 = off); rules may override
+	lastStats         PassStats                     // counts of the last RunOnce (heartbeat summary)
+	optIn             bool                          // watch_by_default: false — only watch_containers / versentry.watch=true
+	watchContainers   map[string]struct{}           // watch_containers (opt-in by name)
+	now               func() time.Time              // clock for min_age (tests)
+	lastPass          *registrypass.Pass            // registry cache of the last RunOnce (DescribeUpdates)
+	describeLookups   int                           // DescribeUpdates registry lookups in lastPass
+	ignoreRebuilds    bool                          // global ignore_rebuilds; rules may override
+	movedFacts        map[string]registry.ImageInfo // host/repo@digest of moved tags → registry facts; kept across passes
+	movedSeen         map[string]struct{}           // movedFacts keys used in the current pass (prune)
+	movedLookups      int                           // moved-tag registry lookups in the current pass
 }
 
 // NewEngine wires the core check loop.
@@ -87,6 +91,8 @@ func NewEngine(
 		rules:             rules,
 		excludeContainers: excludeContainers,
 		now:               time.Now,
+		movedFacts:        make(map[string]registry.ImageInfo),
+		movedSeen:         make(map[string]struct{}),
 	}
 }
 
@@ -134,6 +140,19 @@ func (e *Engine) SetMinAge(d time.Duration) {
 	e.minAge = d
 }
 
+// SetIgnoreRebuilds sets the global ignore_rebuilds; rules[] and the
+// versentry.ignore_rebuilds label override it per image / container.
+func (e *Engine) SetIgnoreRebuilds(v bool) {
+	e.ignoreRebuilds = v
+}
+
+func (e *Engine) effectiveIgnoreRebuilds(rule *Rule) bool {
+	if rule != nil && rule.IgnoreRebuilds != nil {
+		return *rule.IgnoreRebuilds
+	}
+	return e.ignoreRebuilds
+}
+
 // RunOnce performs a single pass over all running containers and returns
 // discovered updates, active state keys ({container}|{host}/{repo}) for pruning, and
 // whether pruning is safe (true only after a successful non-empty fleet listing).
@@ -160,6 +179,7 @@ func (e *Engine) RunOnce(ctx context.Context) ([]model.UpdateAvailable, []string
 
 	pass := registrypass.New(e.log)
 	e.lastPass, e.describeLookups = pass, 0
+	e.movedSeen, e.movedLookups = make(map[string]struct{}), 0
 
 	var checked, upToDate, updates, skipped, pending int
 	found := make([]model.UpdateAvailable, 0)
@@ -207,6 +227,7 @@ func (e *Engine) RunOnce(ctx context.Context) ([]model.UpdateAvailable, []string
 		e.logContainerResult(result)
 	}
 
+	e.pruneMovedFacts()
 	e.lastStats = PassStats{
 		Checked: checked, UpToDate: upToDate, Updates: updates,
 		Pending: pending, Skipped: skipped, Excluded: excluded,
@@ -258,7 +279,7 @@ func (e *Engine) checkContainer(ctx context.Context, c model.Container, pass *re
 	e.logTrackingDiagnostics(c.Name, parsed.Repo, parsed.Tag, mode, digestCause, rule)
 	minAge := e.effectiveMinAge(rule)
 	if mode == imageweb.ModeDigest {
-		return e.checkDigest(ctx, c, parsed, reg, pass, minAge)
+		return e.checkDigest(ctx, c, parsed, reg, pass, minAge, e.effectiveIgnoreRebuilds(rule))
 	}
 
 	listCtx, cancel := context.WithTimeout(ctx, e.timeouts.Registry.Duration)
@@ -435,6 +456,7 @@ func (e *Engine) checkDigest(
 	reg registry.Registry,
 	pass *registrypass.Pass,
 	minAge time.Duration,
+	ignoreRebuilds bool,
 ) (containerResult, error) {
 	base := containerResult{Container: c, ImageRef: c.ImageRef, CurrentTag: parsed.Tag}
 
@@ -459,6 +481,22 @@ func (e *Engine) checkDigest(
 		return containerResult{
 			Container:    c,
 			Status:       statusUpToDate,
+			CurrentTag:   parsed.Tag,
+			LocalDigest:  localDigest,
+			RemoteDigest: remoteDigest,
+			ImageRef:     c.ImageRef,
+		}, nil
+	}
+
+	reason, err := e.unchangedReason(ctx, c, parsed, reg, pass, remoteDigest, ignoreRebuilds)
+	if err != nil {
+		return containerResult{}, err
+	}
+	if reason != "" {
+		return containerResult{
+			Container:    c,
+			Status:       statusUpToDate,
+			Reason:       reason,
 			CurrentTag:   parsed.Tag,
 			LocalDigest:  localDigest,
 			RemoteDigest: remoteDigest,
@@ -580,6 +618,10 @@ func (e *Engine) logContainerResult(r containerResult) {
 		e.log.Info("container checked", attrs...)
 	case statusUpToDate:
 		attrs = append(attrs, "tag", r.CurrentTag)
+		if r.Reason != "" {
+			attrs = append(attrs, "reason", r.Reason,
+				"local", shortDigest(r.LocalDigest), "remote", shortDigest(r.RemoteDigest))
+		}
 		e.log.Debug("container checked", attrs...)
 	case statusPending:
 		attrs = append(attrs, "tag", r.CurrentTag, "reason", r.Reason)

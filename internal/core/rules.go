@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,8 @@ const (
 	labelTrack   = "versentry.track"
 	labelMode    = "versentry.mode" // deprecated alias for labelTrack
 	labelMinAge  = "versentry.min_age"
+	// labelIgnoreRebuilds: true/false, overrides ignore_rebuilds for one container.
+	labelIgnoreRebuilds = "versentry.ignore_rebuilds"
 )
 
 // RuleTrackDigest forces digest detection for an image/container.
@@ -34,6 +37,8 @@ type Rule struct {
 	Exclude *regexp.Regexp // nil when unset; drops matching registry tags
 	Track   string         // "" or RuleTrackDigest
 	MinAge  *time.Duration // nil = global min_age; 0 = off for this image (config rules only)
+	// IgnoreRebuilds: nil = global ignore_rebuilds.
+	IgnoreRebuilds *bool
 	// Overridden lists config-rule fields replaced by container labels (ChainRuleResolver).
 	Overridden []string
 }
@@ -88,12 +93,18 @@ func NewConfigRuleResolver(rules []config.RuleConfig, log *slog.Logger) (*Config
 			d := rc.MinAge.Duration
 			minAge = &d
 		}
+		var ignoreRebuilds *bool
+		if rc.IgnoreRebuilds != nil {
+			v := *rc.IgnoreRebuilds
+			ignoreRebuilds = &v
+		}
 		byImage[rc.Image] = &Rule{
-			Image:   rc.Image,
-			Include: re,
-			Exclude: ex,
-			Track:   track,
-			MinAge:  minAge,
+			Image:          rc.Image,
+			Include:        re,
+			Exclude:        ex,
+			Track:          track,
+			MinAge:         minAge,
+			IgnoreRebuilds: ignoreRebuilds,
 		}
 	}
 	return &ConfigRuleResolver{byImage: byImage}, nil
@@ -136,17 +147,38 @@ func (r *LabelRuleResolver) RuleFor(q RuleQuery) *Rule {
 	exclude := labelRegex(r.log, q, labelExclude, "exclude")
 	track := resolveLabelTrack(r.log, q, q.Labels[labelTrack], q.Labels[labelMode])
 	minAge := resolveLabelMinAge(r.log, q, q.Labels[labelMinAge])
+	ignoreRebuilds := resolveLabelBool(r.log, q, labelIgnoreRebuilds)
 
-	if include == nil && exclude == nil && track == "" && minAge == nil {
+	if include == nil && exclude == nil && track == "" && minAge == nil && ignoreRebuilds == nil {
 		return nil
 	}
 	return &Rule{
-		Image:   q.Image,
-		Include: include,
-		Exclude: exclude,
-		Track:   track,
-		MinAge:  minAge,
+		Image:          q.Image,
+		Include:        include,
+		Exclude:        exclude,
+		Track:          track,
+		MinAge:         minAge,
+		IgnoreRebuilds: ignoreRebuilds,
 	}
+}
+
+// resolveLabelBool parses a true/false label; invalid values log WARN and are
+// ignored (the config value, if any, applies).
+func resolveLabelBool(log *slog.Logger, q RuleQuery, key string) *bool {
+	raw := strings.TrimSpace(q.Labels[key])
+	if raw == "" {
+		return nil
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		log.Warn("invalid "+key+" label, ignoring",
+			"container", q.Container,
+			"image", q.Image,
+			"value", raw,
+		)
+		return nil
+	}
+	return &v
 }
 
 // labelRegex compiles a regex label; invalid values log WARN and are ignored.
@@ -242,7 +274,8 @@ func resolveLabelMinAge(log *slog.Logger, q RuleQuery, raw string) *time.Duratio
 }
 
 // ChainRuleResolver merges rule sources field by field, in increasing priority:
-// a later source overrides each field it sets (include, track, min_age) and
+// a later source overrides each field it sets (include, exclude, track,
+// min_age, ignore_rebuilds) and
 // inherits the rest. Versentry wires config rules first, container labels last,
 // so a label is a per-container override of the central image rule.
 type ChainRuleResolver struct {
@@ -297,6 +330,12 @@ func (c *ChainRuleResolver) RuleFor(q RuleQuery) *Rule {
 				merged.Overridden = append(merged.Overridden, "min_age")
 			}
 			merged.MinAge = rule.MinAge
+		}
+		if rule.IgnoreRebuilds != nil {
+			if merged.IgnoreRebuilds != nil {
+				merged.Overridden = append(merged.Overridden, "ignore_rebuilds")
+			}
+			merged.IgnoreRebuilds = rule.IgnoreRebuilds
 		}
 	}
 	return merged

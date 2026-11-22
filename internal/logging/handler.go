@@ -14,7 +14,8 @@ import (
 //
 //	2006-01-02 15:04:05 INFO message key=value
 //
-// Attribute values are quoted only when they contain spaces or special characters.
+// Attribute values are quoted only when they contain spaces, '=', '"',
+// non-printable runes, or invalid UTF-8.
 type TextHandler struct {
 	w     io.Writer
 	level slog.Level
@@ -144,7 +145,11 @@ func needsQuote(s string) bool {
 		return true
 	}
 	for _, r := range s {
-		if r == ' ' || r == '=' || r == '"' || r < ' ' {
+		// Not printable: ASCII and C1 controls, DEL, bidi overrides and isolates
+		// (U+202A–U+202E, U+2066–U+2069), zero-width and other format runes —
+		// a Docker label could otherwise reverse or hide part of the line. %q
+		// escapes them. Printable non-ASCII (Cyrillic, CJK) stays as is.
+		if r == ' ' || r == '=' || r == '"' || !strconv.IsPrint(r) {
 			return true
 		}
 	}

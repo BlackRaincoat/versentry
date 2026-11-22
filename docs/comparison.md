@@ -10,8 +10,8 @@ Versentry is a **notify-only** monitor for Docker image updates. It reads runnin
 
 Implemented today:
 
-- **Detection:** newer **semver** / dotted numeric tags across majors (cross-major marked `(major)`), and **digest** changes of the same tag for floating tags (`latest`, `stable`, or forced with `track: digest`). Floating version tags such as `postgres:16` get a one-time hint that rebuild alerts need `track: digest`.
-- **Policy:** central `rules:` per image in config (`include` / `exclude` regex, `track: digest`, `min_age`); container labels (`versentry.include`, `versentry.exclude`, `versentry.track`, `versentry.min_age`) override a rule for that one container. Labels baked into an image by its publisher are ignored.
+- **Detection:** newer **semver** / dotted numeric tags across majors (cross-major marked `(major)`), and **digest** changes of the same tag for floating tags (`latest`, `stable`, or forced with `track: digest`). Digest updates show the image's OCI version (`2.3.1 → 3.0.0 (major)`) when it has one, can skip rebuilds without a version change (`ignore_rebuilds`), and a multi-arch tag that moved only because another architecture was rebuilt is not reported. Floating version tags such as `postgres:16` get a one-time hint that rebuild alerts need `track: digest`.
+- **Policy:** central `rules:` per image in config (`include` / `exclude` regex, `track: digest`, `min_age`, `ignore_rebuilds`); container labels (`versentry.include`, `versentry.exclude`, `versentry.track`, `versentry.min_age`, `versentry.ignore_rebuilds`) override a rule for that one container. Labels baked into an image by its publisher are ignored.
 - **Scope:** every running container by default, opt out with `exclude_containers` or `versentry.watch=false`; or opt in with `watch_by_default: false` plus `watch_containers` and/or `versentry.watch=true`.
 - **Timing:** `min_age` (notify only when the new image is old enough in the registry; falls back to the newest version that is), `remind_after` (re-send an update you have not applied), `interval` or cron `schedule` with optional `jitter`, notification state so each update is sent once per notifier — a failing notifier is retried alone, without duplicates on the others.
 - **Registries:** Docker Hub, GHCR, Quay, GitLab without config; any private / self-hosted OCI registry via `type: oci`. Digest checks use `HEAD`, which Docker Hub does not count against pull limits.
@@ -42,15 +42,15 @@ Implemented today:
 
 ## How it compares
 
-Snapshot as of **October 2026**, versions as in the column headers; other projects move fast — check their docs for the current state.
+Snapshot as of **November 2026**, versions as in the column headers; other projects move fast — check their docs for the current state.
 
-| | Versentry | [WUD](https://github.com/getwud/wud) 9.5.0 | [Diun](https://github.com/crazy-max/diun) 4.33.0 | [Watchtower](https://github.com/nicholas-fedor/watchtower) (fork) 1.23.2 | [dockcheck](https://github.com/mag37/dockcheck) 0.8.3 | [Cup](https://github.com/sergi0g/cup) 3.5.1 |
+| | Versentry | [WUD](https://github.com/getwud/wud) 9.8.0 | [Diun](https://github.com/crazy-max/diun) 4.33.1 | [Watchtower](https://github.com/nicholas-fedor/watchtower) (fork) 1.24.1 | [dockcheck](https://github.com/mag37/dockcheck) 0.8.4 | [Cup](https://github.com/sergi0g/cup) 3.6.0 |
 |--|--|--|--|--|--|--|
 | **Changes containers** | never | optional (update triggers) | never | yes (`--monitor-only` to only notify) | yes, interactive or auto (`-n` = check only) | never |
 | **Web UI** | no | yes | no | no | no | yes |
 | **Finds newer version tags** | yes (semver / numeric) | yes (semver) | with `watch_repo` (new tags) | no — same tag only | no — same tag only | yes (semver) |
-| **Rebuild of the same tag (digest)** | yes | yes (default off for Docker Hub) | yes (default) | yes | yes | yes |
-| **Per-image tag policy** | central `rules:` + label override per container | labels per container (regex with `${major}` / `${flavor}` variables) | labels per container + global defaults | — | — | global only (ignore update type, exclude images) |
+| **Rebuild of the same tag (digest)** | yes (optionally only when the OCI version changes) | yes (default off for Docker Hub) | yes (default) | yes | yes | yes |
+| **Per-image tag policy** | central `rules:` + label override per container | labels per container (regex with `${major}` / `${flavor}` variables); digest watching also set centrally by container name | labels per container + global defaults | — | — | ignore update type globally or per image; exclude images |
 | **Default scope** | all running (opt-in available, central list or label) | all (opt-in via label; name / label regex per watcher) | opt-in via label | all (opt-in via label, name/image lists) | all Compose containers (name include / exclude, label opt-in) | all local images (exclude list) |
 | **Minimum image age** | `min_age`, falls back to an older version that qualifies | cool-down `wud.watch.delay` | no | `--cooldown-delay` | `-d N` days | no |
 | **Notifications** | 6 native + Apprise | many built in | many built in | many built in (shoutrrr) | many via templates (incl. Apprise) | none built in (API / JSON, dashboards) |
@@ -61,11 +61,13 @@ Snapshot as of **October 2026**, versions as in the column headers; other projec
 
 dockcheck is a popular bash script for Compose users who want to **see and apply** updates in one go. The two overlap in detection of rebuilt floating tags and differ in almost everything else:
 
-| | Versentry | dockcheck 0.8.3 |
+| | Versentry | dockcheck 0.8.4 |
 |--|--|--|
 | Purpose | notify only | check **and** update (pull + `docker compose up`), with image backups and pruning |
 | What counts as an update | newer version tags (`postgres:16.4 → 16.5`, new majors) **and** rebuilt floating tags | only a changed digest of the **same** tag: `postgres:16.4` never learns about `16.5`; works best on floating tags (`latest`, `16`) |
 | Notification links | GitHub releases from the image's OCI `source` label, else the registry page | user-maintained `urls.list` (container name → release notes) |
+| Multi-arch tag moved by another architecture's rebuild | not reported (layers of this platform's image compared) | not reported (same check, since 0.8.4) |
+| Rebuild without a new version | reported, or skipped with `ignore_rebuilds` when the image has an OCI version label | reported |
 | Repeat suppression | state per container; `remind_after` for reminders | snooze window for identical notifications |
 | Minimum age | `min_age`, global or per image / container; falls back to an older qualifying version | `-d N` days; too-young images are listed and skipped |
 | Metrics | — | Prometheus textfile addon |

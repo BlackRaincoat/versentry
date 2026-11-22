@@ -19,6 +19,13 @@ func String() string {
 	return v + " (" + c + ")"
 }
 
+// UserAgent identifies Versentry in outbound HTTP requests (registries,
+// notifiers, heartbeat): "versentry/1.7.0", "versentry/dev" for local builds.
+// No host or instance name — the request must not reveal the deployment.
+func UserAgent() string {
+	return "versentry/" + DisplayVersion()
+}
+
 // DisplayVersion returns a non-empty version label for logs and CLI.
 func DisplayVersion() string {
 	if Version == "" {

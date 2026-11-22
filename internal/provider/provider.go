@@ -17,6 +17,22 @@ type Provider interface {
 	Ping(ctx context.Context) error
 }
 
+// LocalImage is the image a container runs, as the local engine reports it.
+type LocalImage struct {
+	// ID is the engine's image ID (config digest, or the manifest/index digest
+	// with the containerd image store) — a cache key, never compared to a registry.
+	ID string
+	// Layers is RootFS.Layers: the image's diff IDs ("sha256:…").
+	Layers []string
+}
+
+// LocalImageReader is optionally implemented by providers that can report the
+// running image's layers. Used to tell a moved multi-arch index whose image for
+// this platform is unchanged (another architecture rebuilt) from a real update.
+type LocalImageReader interface {
+	LocalImage(ctx context.Context, container model.Container) (LocalImage, error)
+}
+
 // Factory constructs a Provider from plugin-specific configuration.
 type Factory func(cfg map[string]any) (Provider, error)
 

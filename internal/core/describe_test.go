@@ -205,3 +205,37 @@ func TestRunPassDescribesOnlySentUpdates(t *testing.T) {
 		t.Fatalf("suppressed update was described: batches=%d lookups=%v", len(rec.got), reg.createdCalls)
 	}
 }
+
+func TestVersionBump(t *testing.T) {
+	cases := []struct{ cur, latest, want string }{
+		{"2.3.1", "2.3.2", model.BumpPatch},
+		{"2.3.1", "2.4.0", model.BumpMinor},
+		{"2.3.1", "3.0.0", model.BumpMajor},
+		{"v1.11.0", "v1.12.0", model.BumpMinor},
+		{"1.27", "1.28", model.BumpMinor},
+		{"2.3.1", "2.3.1", ""},   // rebuilt
+		{"2.4.0", "2.3.1", ""},   // downgrade
+		{"", "2.4.0", ""},        // running image unlabeled
+		{"2.3.1", "", ""},        // new image unlabeled
+		{"nightly", "2.4.0", ""}, // not semver
+		{"2024.10.1", "2025.1.0", model.BumpMajor},
+	}
+	for _, tc := range cases {
+		if got := versionBump(tc.cur, tc.latest); got != tc.want {
+			t.Errorf("versionBump(%q, %q) = %q, want %q", tc.cur, tc.latest, got, tc.want)
+		}
+	}
+}
+
+func TestDescribeDigestUpdateSetsBump(t *testing.T) {
+	reg := &agedRegistry{
+		modeTestRegistry: modeTestRegistry{host: imageref.DockerHubHost, remoteDigest: "sha256:remote"},
+		versions:         map[string]string{"latest": "3.0.0"},
+	}
+	eng := newMinAgeEngine(t, reg, 0, nil, "sha256:local")
+	batch := []model.UpdateAvailable{checkInPass(t, eng, digestApp(map[string]string{ociVersionLabel: "2.9.1"}))}
+	eng.DescribeUpdates(context.Background(), batch)
+	if batch[0].Bump != model.BumpMajor {
+		t.Fatalf("bump = %q, want major", batch[0].Bump)
+	}
+}

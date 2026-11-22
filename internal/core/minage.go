@@ -137,8 +137,11 @@ func (e *Engine) pendingResult(c model.Container, currentTag string, p *pendingC
 		CurrentTag: currentTag,
 		LatestTag:  p.tag,
 		ImageRef:   c.ImageRef,
-		Reason: fmt.Sprintf("%s is %s old, min_age %s",
-			p.tag, formatAge(p.age), formatAge(minAge)),
+		// eligible: when the candidate reaches min_age; it is notified at the
+		// first check after that (process time zone, like log timestamps).
+		Reason: fmt.Sprintf("%s is %s old, min_age %s, eligible %s",
+			p.tag, formatAge(p.age), formatAge(minAge),
+			e.now().Add(minAge-p.age).Format("2006-01-02 15:04")),
 	}
 }
 

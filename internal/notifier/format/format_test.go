@@ -151,11 +151,15 @@ func TestChangeTextDigestVersions(t *testing.T) {
 		{"no version, build time", "", "", checked.Add(-90 * time.Minute), "digest changed: aaaaaaaaaaaa… → bbbbbbbbbbbb… (built 1 hour ago)"},
 		{"nothing known", "2.3.1", "", time.Time{}, "digest changed: aaaaaaaaaaaa… → bbbbbbbbbbbb…"},
 		{"fresh", "1", "2", checked.Add(-10 * time.Minute), "1 → 2 (built less than an hour ago)"},
+		{"major", "2.9.0", "3.0.0", time.Time{}, "2.9.0 → 3.0.0 (major)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e := base
 			e.CurrentVersion, e.LatestVersion, e.LatestCreated = tc.cur, tc.latest, tc.created
+			if tc.name == "major" {
+				e.Bump = model.BumpMajor
+			}
 			if got := ChangeText(e, false); got != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}

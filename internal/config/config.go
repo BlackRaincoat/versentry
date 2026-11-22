@@ -35,6 +35,8 @@ type RuleConfig struct {
 	Mode    string `yaml:"mode"`  // deprecated alias for track (digest only)
 	// MinAge overrides the global min_age for this image; nil = inherit, 0 = off.
 	MinAge *Duration `yaml:"min_age"`
+	// IgnoreRebuilds overrides the global ignore_rebuilds for this image; nil = inherit.
+	IgnoreRebuilds *bool `yaml:"ignore_rebuilds"`
 }
 
 // Config is the top-level Versentry configuration loaded from YAML.
@@ -56,6 +58,9 @@ type Config struct {
 	// MinAge delays notifications until the candidate image is this old in the
 	// registry (config blob created). 0 = off.
 	MinAge Duration `yaml:"min_age"`
+	// IgnoreRebuilds: a digest update whose new image carries the same
+	// org.opencontainers.image.version as the running one is not reported.
+	IgnoreRebuilds bool `yaml:"ignore_rebuilds"`
 	// WatchByDefault: nil/true = check every container not opted out (default);
 	// false = opt-in, only containers labeled versentry.watch=true.
 	WatchByDefault *bool `yaml:"watch_by_default"`
@@ -288,8 +293,8 @@ func validateRules(rules []RuleConfig) error {
 		if effective != "" && effective != "digest" {
 			return fmt.Errorf("rules[%d]: unknown track %q, only \"digest\" supported", i, effective)
 		}
-		if rule.Include == "" && rule.Exclude == "" && effective != "digest" && rule.MinAge == nil {
-			return fmt.Errorf("rules[%d]: include, exclude, track: digest, or min_age is required", i)
+		if rule.Include == "" && rule.Exclude == "" && effective != "digest" && rule.MinAge == nil && rule.IgnoreRebuilds == nil {
+			return fmt.Errorf("rules[%d]: include, exclude, track: digest, min_age, or ignore_rebuilds is required", i)
 		}
 		if rule.Exclude != "" {
 			if _, err := regexp.Compile(rule.Exclude); err != nil {

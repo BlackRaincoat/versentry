@@ -9,6 +9,7 @@ import (
 	"github.com/BlackRaincoat/versentry/internal/core/registrypass"
 	"github.com/BlackRaincoat/versentry/internal/model"
 	"github.com/BlackRaincoat/versentry/internal/registry"
+	"github.com/Masterminds/semver/v3"
 )
 
 // ociVersionLabel carries the packaged software version (OCI image spec).
@@ -53,6 +54,9 @@ func (e *Engine) DescribeUpdates(ctx context.Context, updates []model.UpdateAvai
 		u.CurrentVersion = cleanVersion(u.Container.Labels[ociVersionLabel])
 		info, ok := pass.CachedImageInfo(u.Host, u.Repo, u.CurrentTag)
 		if !ok {
+			info, ok = e.movedFacts[movedKey(u.Host, u.Repo, u.RemoteDigest)]
+		}
+		if !ok {
 			info, ok = e.lookupImageInfo(ctx, pass, *u)
 			if !ok {
 				continue
@@ -67,7 +71,26 @@ func (e *Engine) DescribeUpdates(ctx context.Context, updates []model.UpdateAvai
 		}
 		u.LatestVersion = cleanVersion(info.Version)
 		u.LatestCreated = e.usableCreated(info.Created)
+		u.Bump = versionBump(u.CurrentVersion, u.LatestVersion)
 	}
+}
+
+// versionBump classifies a digest update by its OCI versions, like a tag
+// update: major|minor|patch when both parse as semver and the new one is
+// higher; empty otherwise (unknown, rebuilt, not semver, or a downgrade).
+func versionBump(current, latest string) string {
+	if current == "" || latest == "" {
+		return ""
+	}
+	cur, err := semver.NewVersion(current)
+	if err != nil {
+		return ""
+	}
+	next, err := semver.NewVersion(latest)
+	if err != nil || !next.GreaterThan(cur) {
+		return ""
+	}
+	return semverBump(cur, next)
 }
 
 func (e *Engine) lookupImageInfo(ctx context.Context, pass *registrypass.Pass, u model.UpdateAvailable) (registry.ImageInfo, bool) {

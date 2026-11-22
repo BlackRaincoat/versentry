@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BlackRaincoat/versentry/internal/version"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	xproxy "golang.org/x/net/proxy"
 )
@@ -67,8 +68,29 @@ func BuildHTTPClient(proxyURL string, timeout time.Duration) (*http.Client, erro
 	}
 	return &http.Client{
 		Timeout:   timeout,
-		Transport: transport,
+		Transport: WithUserAgent(transport),
 	}, nil
+}
+
+// WithUserAgent sets User-Agent to version.UserAgent() on requests that do not
+// carry one, so notifier and heartbeat endpoints see versentry/<version>
+// instead of Go-http-client/1.1.
+func WithUserAgent(rt http.RoundTripper) http.RoundTripper {
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	return userAgentTransport{base: rt}
+}
+
+type userAgentTransport struct{ base http.RoundTripper }
+
+func (t userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Header.Get("User-Agent") != "" {
+		return t.base.RoundTrip(req)
+	}
+	r := req.Clone(req.Context()) // RoundTrippers must not modify the caller's request
+	r.Header.Set("User-Agent", version.UserAgent())
+	return t.base.RoundTrip(r)
 }
 
 // MaskProxyURL redacts the password in a proxy URL for safe logging.

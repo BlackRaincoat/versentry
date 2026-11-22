@@ -455,3 +455,70 @@ func TestLocalDigestErrors(t *testing.T) {
 		t.Fatalf("image inspect failure: %v", err)
 	}
 }
+
+func TestLocalImageReportsIDAndLayers(t *testing.T) {
+	d := digestDaemon([]string{"acme/app@" + digestA})
+	d.images["sha256:img"]["RootFS"] = map[string]any{"Type": "layers", "Layers": []string{digestA, digestB}}
+	p := newTestProvider(t, d)
+	got, err := p.LocalImage(context.Background(), model.Container{ID: "c1", Name: "web", ImageRef: "acme/app:latest"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "sha256:img" || len(got.Layers) != 2 || got.Layers[0] != digestA || got.Layers[1] != digestB {
+		t.Fatalf("got %+v", got)
+	}
+	// By the container's image ID, not its (possibly re-pulled) tag.
+	if d.count("/images/sha256:img/json") != 1 || d.count("/images/acme") != 0 {
+		t.Fatalf("requests = %v", d.requestsMatching("/images/"))
+	}
+	if _, err := p.LocalImage(context.Background(), model.Container{ID: "missing", Name: "x"}); err == nil {
+		t.Fatal("missing container: want error")
+	}
+}
+
+func TestListRunningResolvesImageListedByID(t *testing.T) {
+	const id = "sha256:cd370f99dbfb63a9541c3787c576352d0d22e78fa33ef9d831f97cbeee9667e9"
+	d := &fakeDaemon{
+		containers: []map[string]any{
+			// Tag moved after create (docker pull without recreate): listed by ID.
+			{"Id": "moved", "Names": []string{"/moved"}, "Image": id, "ImageID": id},
+			// Short ID spelling.
+			{"Id": "short", "Names": []string{"/short"}, "Image": "cd370f99dbfb", "ImageID": id},
+			// Really started by ID: Config.Image is the ID too.
+			{"Id": "byid", "Names": []string{"/byid"}, "Image": id, "ImageID": id},
+			// Inspect fails: keep what the list said.
+			{"Id": "gone", "Names": []string{"/gone"}, "Image": id, "ImageID": id},
+			// Normal entry: no inspect.
+			{"Id": "named", "Names": []string{"/named"}, "Image": "nginx:1.27", "ImageID": "sha256:img1"},
+		},
+		containerByID: map[string]map[string]any{
+			"moved": {"Id": "moved", "Image": id, "Config": map[string]any{"Image": "traefik/whoami:latest"}},
+			"short": {"Id": "short", "Image": id, "Config": map[string]any{"Image": "traefik/whoami:latest"}},
+			"byid":  {"Id": "byid", "Image": id, "Config": map[string]any{"Image": id}},
+		},
+		images: map[string]map[string]any{
+			id:            {"Id": id, "Config": map[string]any{}},
+			"sha256:img1": {"Id": "sha256:img1", "Config": map[string]any{}},
+		},
+	}
+	p := newTestProvider(t, d)
+	got, err := p.ListRunning(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"moved": "traefik/whoami:latest",
+		"short": "traefik/whoami:latest",
+		"byid":  id,
+		"gone":  id,
+		"named": "nginx:1.27",
+	}
+	for _, c := range got {
+		if c.ImageRef != want[c.ID] {
+			t.Errorf("%s: ImageRef = %q, want %q", c.ID, c.ImageRef, want[c.ID])
+		}
+	}
+	if n := d.count("/containers/named/json"); n != 0 {
+		t.Errorf("named entry inspected %d times, want 0", n)
+	}
+}

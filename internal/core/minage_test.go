@@ -23,6 +23,8 @@ type agedRegistry struct {
 	versions     map[string]string    // tag → org.opencontainers.image.version
 	createdErr   error
 	createdCalls []string
+	index        bool     // ImageInfo.Index
+	diffIDs      []string // ImageInfo.DiffIDs
 }
 
 func (r *agedRegistry) ImageInfo(ctx context.Context, repo, tag string) (registry.ImageInfo, error) {
@@ -34,6 +36,8 @@ func (r *agedRegistry) ImageInfo(ctx context.Context, repo, tag string) (registr
 		Digest:  strings.TrimPrefix(r.remoteDigest, "sha256:"),
 		Created: r.created[tag],
 		Version: r.versions[tag],
+		Index:   r.index,
+		DiffIDs: r.diffIDs,
 	}, nil
 }
 
@@ -100,6 +104,10 @@ func TestMinAgeAllCandidatesYoungIsPending(t *testing.T) {
 	}
 	if res.LatestTag != "1.2.0" || !strings.Contains(res.Reason, "1.2.0 is 12h old, min_age 3d") {
 		t.Fatalf("latest=%q reason=%q", res.LatestTag, res.Reason)
+	}
+	// 12h old of 3d: eligible 2.5 days after the check (2026-10-01 12:00 UTC).
+	if !strings.HasSuffix(res.Reason, ", eligible 2026-10-04 00:00") {
+		t.Fatalf("reason = %q, want the eligible date", res.Reason)
 	}
 }
 

@@ -30,6 +30,12 @@ type ImageInfo struct {
 	Created time.Time
 	// Version is the org.opencontainers.image.version label; empty when unset.
 	Version string
+	// Index: the tag is a multi-arch index; Created/Version/DiffIDs then come
+	// from the child for this process's platform (versentry runs on the host).
+	Index bool
+	// DiffIDs is the config blob rootfs.diff_ids ("sha256:…"), the same values
+	// Docker reports as RootFS.Layers for a local image.
+	DiffIDs []string
 }
 
 // ImageInfoReader is optionally implemented by registries that can read an

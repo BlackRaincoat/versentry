@@ -170,6 +170,10 @@ func NewApp(cfg *config.Config, log *slog.Logger) (*App, error) {
 		log.Warn("watch_containers is ignored while watch_by_default is true (every container is already checked)")
 	}
 	engine.SetMinAge(cfg.MinAge.Duration)
+	engine.SetIgnoreRebuilds(cfg.IgnoreRebuilds)
+	if cfg.IgnoreRebuilds {
+		log.Info("ignore_rebuilds enabled: digest updates without a version change are not reported")
+	}
 	if cfg.MinAge.Duration > 0 {
 		log.Info("min_age enabled", "min_age", formatAge(cfg.MinAge.Duration))
 	}

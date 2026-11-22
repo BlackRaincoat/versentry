@@ -9,7 +9,7 @@ Back to [README](../README.md) · [Configuration overview](configuration.md)
 ## Two sources (priority)
 
 1. **Config** `rules:` — the base for an image (repo path as in compose: `postgres`, `chatwoot/chatwoot`, `gethomepage/homepage` for GHCR)
-2. **Container labels** `versentry.include` / `versentry.exclude` / `versentry.track` / `versentry.min_age` — override the config rule for that container only
+2. **Container labels** `versentry.include` / `versentry.exclude` / `versentry.track` / `versentry.min_age` / `versentry.ignore_rebuilds` — override the config rule for that container only
 3. Neither → default detection (semver if the tag parses; otherwise digest)
 
 **Config is the base, labels override per container, field by field.** A config rule applies to every container of that image. A container's own labels override only the fields they set and inherit the rest:
@@ -20,6 +20,7 @@ Back to [README](../README.md) · [Configuration overview](configuration.md)
 | `exclude` | `exclude:` | `versentry.exclude` |
 | `track` | `track: digest` | `versentry.track=digest`, or `versentry.track=auto` to undo a config `track: digest` (default detection: semver → numeric → digest) |
 | `min_age` | `min_age:` | `versentry.min_age` (`3d`, `36h`, `0` = off) |
+| `ignore_rebuilds` | `ignore_rebuilds: true` / `false` | `versentry.ignore_rebuilds` (`true` / `false`) — see [Ignore rebuilds](configuration.md#ignore-rebuilds-ignore_rebuilds) |
 
 Example: config `postgres` → `include: "^17\\."`, `min_age: 3d`; one container labeled `versentry.include=^16\.` follows the 16 line and still waits 3 days. Other `postgres` containers keep `^17\.`.
 

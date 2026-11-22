@@ -12,6 +12,7 @@ import (
 
 	"github.com/BlackRaincoat/versentry/internal/netutil"
 	"github.com/BlackRaincoat/versentry/internal/registry"
+	"github.com/BlackRaincoat/versentry/internal/version"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -116,12 +117,14 @@ func (r *Registry) tagDigestOnce(ctx context.Context, repo, tag string, log *slo
 	return strings.TrimPrefix(desc.Digest.String(), "sha256:"), nil
 }
 
-// ImageInfo reads the config blob of repo:tag: build time and version label.
+// ImageInfo reads the config blob of repo:tag: build time, version label and
+// layer diff IDs.
 // For a multi-arch index it reads the child matching this process's platform
 // (versentry runs on the Docker host), else the first real platform — all
 // children of one tag are built together. Costs one index GET + one child
 // manifest GET (one Docker Hub pull) + one config blob; callers use it only
-// for update candidates (min_age) and for digest updates being notified.
+// for update candidates (min_age), moved multi-arch indexes (same layers for
+// this platform?) and digest updates being notified.
 func (r *Registry) ImageInfo(ctx context.Context, repo, tag string) (registry.ImageInfo, error) {
 	info, err := r.imageInfoOnce(ctx, repo, tag)
 	if err != nil {
@@ -170,10 +173,16 @@ func (r *Registry) imageInfoOnce(ctx context.Context, repo, tag string) (registr
 	if err != nil {
 		return registry.ImageInfo{}, err
 	}
+	diffIDs := make([]string, 0, len(cfg.RootFS.DiffIDs))
+	for _, h := range cfg.RootFS.DiffIDs {
+		diffIDs = append(diffIDs, h.String())
+	}
 	return registry.ImageInfo{
 		Digest:  strings.TrimPrefix(desc.Digest.String(), "sha256:"),
 		Created: cfg.Created.Time,
 		Version: cfg.Config.Labels[ociVersionLabel],
+		Index:   desc.MediaType.IsIndex(),
+		DiffIDs: diffIDs,
 	}, nil
 }
 
@@ -356,6 +365,8 @@ func (r *Registry) remoteOpts(ctx context.Context) []remote.Option {
 		remote.WithContext(ctx),
 		remote.WithAuth(r.auth),
 		remote.WithTransport(withHangTrace(withRetryAfterCapture(base))),
+		// go-containerregistry appends its own token: "versentry/1.7.0 go-containerregistry/v0.20.3".
+		remote.WithUserAgent(version.UserAgent()),
 	}
 }
 

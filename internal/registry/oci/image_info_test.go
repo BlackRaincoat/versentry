@@ -34,12 +34,21 @@ func imageFixture(created string) (cfg, manifest blob) {
 
 // versionedImageFixture also sets the org.opencontainers.image.version label.
 func versionedImageFixture(created, version string) (cfg, manifest blob) {
+	return layeredImageFixture(created, version)
+}
+
+// layeredImageFixture also sets rootfs.diff_ids.
+func layeredImageFixture(created, version string, diffIDs ...string) (cfg, manifest blob) {
+	ids := "[]"
+	if len(diffIDs) > 0 {
+		ids = `["` + strings.Join(diffIDs, `","`) + `"]`
+	}
 	config := "{}"
 	if version != "" {
 		config = fmt.Sprintf(`{"Labels":{"org.opencontainers.image.version":%q}}`, version)
 	}
 	cfg = blob{
-		body:      []byte(fmt.Sprintf(`{"architecture":"amd64","os":"linux","created":%q,"rootfs":{"type":"layers","diff_ids":[]},"config":%s}`, created, config)),
+		body:      []byte(fmt.Sprintf(`{"architecture":"amd64","os":"linux","created":%q,"rootfs":{"type":"layers","diff_ids":%s},"config":%s}`, created, ids, config)),
 		mediaType: "application/vnd.oci.image.config.v1+json",
 	}
 	manifest = blob{
@@ -102,6 +111,9 @@ func TestImageInfoSingleManifest(t *testing.T) {
 	if got.Digest != strings.TrimPrefix(sha(man.body), "sha256:") {
 		t.Fatalf("digest = %q, want manifest digest", got.Digest)
 	}
+	if got.Index {
+		t.Fatal("single manifest reported as index")
+	}
 }
 
 func TestImageInfoWithoutVersionLabel(t *testing.T) {
@@ -121,8 +133,9 @@ func TestImageInfoIndexPicksOwnPlatformNotAttestation(t *testing.T) {
 	if runtime.GOARCH == otherArch {
 		otherArch = "ppc64le"
 	}
-	cfgOwn, manOwn := versionedImageFixture("2026-09-21T00:00:00Z", "3.0.1")
-	cfgOther, manOther := imageFixture("2020-01-01T00:00:00Z")
+	layerA, layerB := sha([]byte("layer-a")), sha([]byte("layer-b"))
+	cfgOwn, manOwn := layeredImageFixture("2026-09-21T00:00:00Z", "3.0.1", layerA, layerB)
+	cfgOther, manOther := layeredImageFixture("2020-01-01T00:00:00Z", "", sha([]byte("other")))
 	cfgAtt, manAtt := imageFixture("2019-01-01T00:00:00Z")
 
 	child := func(m blob, os, arch string) string {
@@ -150,6 +163,9 @@ func TestImageInfoIndexPicksOwnPlatformNotAttestation(t *testing.T) {
 	if got.Created.Year() != 2026 || got.Version != "3.0.1" {
 		t.Fatalf("info = %+v, want own-platform image (2026, 3.0.1)", got)
 	}
+	if !got.Index || len(got.DiffIDs) != 2 || got.DiffIDs[0] != layerA || got.DiffIDs[1] != layerB {
+		t.Fatalf("index=%v diff_ids=%v, want own-platform layers %s %s", got.Index, got.DiffIDs, layerA, layerB)
+	}
 	// Digest is the index (what TagDigest returns), not the platform child.
 	if got.Digest != strings.TrimPrefix(sha(index.body), "sha256:") {
 		t.Fatalf("digest = %q, want index digest", got.Digest)
@@ -169,6 +185,24 @@ func TestPickPlatformChildFallsBackToFirstRealPlatform(t *testing.T) {
 	}
 	if _, ok := pickPlatformChild(children[:1], "linux", "amd64"); ok {
 		t.Fatal("attestation-only index must not yield a child")
+	}
+}
+
+func TestRegistryRequestsCarryUserAgent(t *testing.T) {
+	var uas []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uas = append(uas, r.Header.Get("User-Agent"))
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	_, _ = testRegistry(t, strings.TrimPrefix(srv.URL, "http://")).TagDigest(context.Background(), "org/app", "latest")
+	if len(uas) == 0 {
+		t.Fatal("no request")
+	}
+	for _, ua := range uas {
+		if !strings.HasPrefix(ua, "versentry/") {
+			t.Fatalf("User-Agent = %q, want versentry/<version> first", ua)
+		}
 	}
 }
 
